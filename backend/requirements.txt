@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pytest
+flask
+openai>=1.40.0

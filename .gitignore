@@ -1,0 +1,134 @@
+# =========================
+# Python
+# =========================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+backend/venv/
+backend/.venv/
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.pyre/
+*.egg-info/
+
+
+# =========================
+# Environment / Secrets
+# =========================
+
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+
+
+# =========================
+# VAJRA Runtime Data
+# =========================
+
+runs/*
+!runs/.gitkeep
+
+workspaces/
+workspace/
+tmp/
+temp/
+
+
+# =========================
+# Logs
+# =========================
+
+*.log
+logs/
+
+
+# =========================
+# Node / React / Vite
+# =========================
+
+node_modules/
+frontend/node_modules/
+
+dist/
+frontend/dist/
+build/
+frontend/build/
+
+.vite/
+frontend/.vite/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# =========================
+# IDE / Editor
+# =========================
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+.idea/
+
+*.swp
+*.swo
+*~
+
+
+# =========================
+# OS Files
+# =========================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# =========================
+# Generated / Temporary Files
+# =========================
+
+*.tmp
+*.temp
+*.bak
+
+
+# =========================
+# Archives
+# =========================
+
+# Ignore generated project release archives
+VAJRA-demo-*.zip
+VAJRA-demo-v*.zip
+
+# Keep the bundled demo target
+!vajra-demo-target.zip
+
+
+# =========================
+# Security / Tool Output
+# =========================
+
+.semgrep/
+.sarif/
+*.sarif
+*.sbom

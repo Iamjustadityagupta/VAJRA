@@ -1,0 +1,35 @@
+# Normalize all text files to LF in Git
+* text=auto eol=lf
+
+# Python
+*.py text eol=lf
+
+# JavaScript / React
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+
+# Web
+*.html text eol=lf
+*.css text eol=lf
+
+# Configuration / documentation
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.env.example text eol=lf
+
+# Git files
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Archives / binaries
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
