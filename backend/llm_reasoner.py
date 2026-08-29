@@ -14,7 +14,8 @@ class LLMReasoner:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "demo").lower()
         self.api_key = os.getenv("LLM_API_KEY", "")
-        self.model = os.getenv("LLM_MODEL", "gpt-5.6-luna")
+        # Set LLM_MODEL explicitly in .env for the model available to your API account.
+        self.model = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 
     @property
     def live(self) -> bool:
@@ -31,14 +32,13 @@ class LLMReasoner:
             return self._demo_reasoning(source)
 
         client = OpenAI(api_key=self.api_key)
-
         retry_context = ""
         if previous_attempt:
             retry_context = f"""
 PREVIOUS PATCH ATTEMPT FAILED VALIDATION:
 {json.dumps(previous_attempt, indent=2)}
 
-Generate a different, safer patch. Address the specific validation failure.
+Generate a different, safer patch and address the specific validation failure.
 """
 
         prompt = f"""
@@ -59,15 +59,10 @@ RELEVANT SOURCE FILE:
 {source}
 ```
 
-Task:
-1. Identify the root cause.
-2. Explain the security impact.
-3. Describe the minimal remediation.
-4. Return the COMPLETE replacement source file with the smallest targeted fix.
-
-The patched source must preserve unrelated functionality.
-VAJRA will independently attack, test, and rescan the patch, so do not claim
-that it has been verified.
+Return a minimal targeted remediation. The patched_code field MUST contain the
+COMPLETE replacement contents of the supplied source file. Preserve unrelated
+functionality. Do not claim that the patch is verified; VAJRA verifies it
+separately through attack replay, regression tests, and rescanning.
 """
 
         response = client.responses.create(
@@ -86,12 +81,7 @@ that it has been verified.
                             "remediation": {"type": "string"},
                             "patched_code": {"type": "string"},
                         },
-                        "required": [
-                            "root_cause",
-                            "impact",
-                            "remediation",
-                            "patched_code",
-                        ],
+                        "required": ["root_cause", "impact", "remediation", "patched_code"],
                         "additionalProperties": False,
                     },
                 }
@@ -112,10 +102,8 @@ that it has been verified.
             '    rows = db.execute(query, (name,)).fetchall()',
             1,
         )
-
         if patched == source:
             raise ValueError("Demo reasoner could not identify the expected vulnerable SQL pattern")
-
         return {
             "root_cause": "User-controlled input is concatenated directly into a SQL query.",
             "impact": "An attacker can alter SQL query structure and retrieve unintended records.",

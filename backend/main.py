@@ -2,13 +2,13 @@ from llm_reasoner import LLMReasoner
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pathlib import Path
 import ast
 import difflib
 import importlib.util
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -25,7 +25,7 @@ except ImportError:
 RUNS = BASE / "runs"
 RUNS.mkdir(exist_ok=True)
 
-app = FastAPI(title="VAJRA Demo", version="0.5.0")
+app = FastAPI(title="VAJRA Demo", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -144,7 +144,8 @@ def run_regression_tests(twin: Path):
             timeout=30,
             check=False,
         )
-        return completed.returncode == 0, completed.stdout[-3000:] + completed.stderr[-1000:]
+        output = completed.stdout[-3000:] + completed.stderr[-1000:]
+        return completed.returncode == 0, output
     except subprocess.TimeoutExpired:
         return False, "pytest timed out after 30 seconds."
 
@@ -153,16 +154,35 @@ def write_evidence(run_dir: Path, payload):
     (run_dir / "evidence.json").write_text(json.dumps(payload, indent=2))
 
 
+def package_verified_codebase(twin: Path, run_dir: Path):
+    archive = run_dir / "verified-fixed-codebase.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in twin.rglob("*"):
+            if path.is_file() and "__pycache__" not in path.parts and ".pytest_cache" not in path.parts:
+                z.write(path, path.relative_to(twin))
+    return archive
+
+
 @app.get("/api/health")
 def health():
     reasoner = LLMReasoner()
-    return {"ok": True, "service": "VAJRA", "version": "0.5.0", "llm_mode": "live" if reasoner.live else "demo"}
+    return {
+        "ok": True,
+        "service": "VAJRA",
+        "version": "0.6.0",
+        "llm_mode": "live" if reasoner.live else "demo",
+    }
 
 
 @app.get("/api/llm-status")
 def llm_status():
     reasoner = LLMReasoner()
-    return {"provider": reasoner.provider, "model": reasoner.model, "live": reasoner.live, "mode": "live" if reasoner.live else "demo"}
+    return {
+        "provider": reasoner.provider,
+        "model": reasoner.model,
+        "live": reasoner.live,
+        "mode": "live" if reasoner.live else "demo",
+    }
 
 
 @app.post("/api/demo/run")
@@ -185,7 +205,13 @@ async def run_demo(file: UploadFile = File(...)):
     events = [emit("SAFE CLONE", "pass", "Original codebase protected; VAJRA-TWIN created.")]
     findings, engine = semgrep_scan(twin)
     if not findings:
-        result = {"run_id": run_id, "events": events + [emit("DISCOVER", "pass", "No supported vulnerability detected.", count=0, engine=engine)], "findings": [], "status": "CLEAN", "engine": engine}
+        result = {
+            "run_id": run_id,
+            "events": events + [emit("DISCOVER", "pass", "No supported vulnerability detected.", count=0, engine=engine)],
+            "findings": [],
+            "status": "CLEAN",
+            "engine": engine,
+        }
         write_evidence(run_dir, result)
         return result
 
@@ -198,7 +224,8 @@ async def run_demo(file: UploadFile = File(...)):
 
     payload = "' OR '1'='1"
     reproduced, reproduction_output = reproduce_with_flask(path, payload)
-    events.append(emit("REPRODUCE", "pass" if reproduced else "fail", "Original exploit reproduced successfully." if reproduced else "Exploit could not be reproduced.", payload=payload, target=rel, response=reproduction_output))
+    reproduction = {"payload": payload, "response": reproduction_output, "exploitable": reproduced}
+    events.append(emit("REPRODUCE", "pass" if reproduced else "fail", "Original exploit reproduced successfully." if reproduced else "Exploit could not be reproduced.", **reproduction, target=rel))
     if not reproduced:
         result = {"run_id": run_id, "events": events, "findings": [finding], "status": "FAILED"}
         write_evidence(run_dir, result)
@@ -217,21 +244,21 @@ async def run_demo(file: UploadFile = File(...)):
 
     for attempt in range(1, max_attempts + 1):
         try:
-            patched, reasoning = reason_and_patch(path, finding, {"payload": payload, "response": reproduction_output}, previous_failure)
+            patched, reasoning = reason_and_patch(path, finding, reproduction, previous_failure)
         except Exception as exc:
             events.append(emit("REASON", "fail", f"Reasoning/patch generation failed: {exc}", attempt=attempt))
             break
 
         final_reasoning = reasoning
         events.append(emit("REASON", "pass", "Root cause identified and remediation strategy selected.", attempt=attempt, **reasoning))
+
         if patched == before:
             events.append(emit("PATCH", "fail", "Generated patch made no changes.", attempt=attempt))
             previous_failure = {"reason": "Patch made no changes."}
             continue
 
         path.write_text(patched)
-        diff = "".join(difflib.unified_diff(before.splitlines(True), patched.splitlines(True), fromfile=f"a/{rel}", tofile=f"b/{rel}"))
-        final_diff = diff
+        final_diff = "".join(difflib.unified_diff(before.splitlines(True), patched.splitlines(True), fromfile=f"a/{rel}", tofile=f"b/{rel}"))
         events.append(emit("PATCH", "pass", "Minimal targeted patch generated and applied to VAJRA-TWIN.", file=rel, attempt=attempt))
 
         mutations = [payload, '" OR "1"="1', "' UNION SELECT NULL--", "admin'--"]
@@ -272,6 +299,14 @@ async def run_demo(file: UploadFile = File(...)):
     events.append(emit("RESCAN", "pass" if clean and accepted else "fail", f"Rescan complete: {remaining} findings remain.", remaining=remaining, engine=post_engine))
     status = "VERIFIED" if accepted and clean else "FAILED"
 
+    artifacts = {}
+    if status == "VERIFIED":
+        archive = package_verified_codebase(twin, run_dir)
+        artifacts = {
+            "verified_codebase": f"/api/runs/{run_id}/verified-codebase",
+            "evidence_report": f"/api/runs/{run_id}/evidence",
+        }
+
     result = {
         "run_id": run_id,
         "events": events,
@@ -289,6 +324,7 @@ async def run_demo(file: UploadFile = File(...)):
         "pytest_output": final_pytest_output,
         "remaining_findings": remaining,
         "post_rescan_engine": post_engine,
+        "artifacts": artifacts,
     }
     write_evidence(run_dir, result)
     return result
@@ -299,4 +335,12 @@ def evidence(run_id: str):
     evidence_file = RUNS / run_id / "evidence.json"
     if not evidence_file.exists():
         raise HTTPException(404, "Run not found")
-    return json.loads(evidence_file.read_text())
+    return FileResponse(evidence_file, media_type="application/json", filename=f"{run_id}-evidence.json")
+
+
+@app.get("/api/runs/{run_id}/verified-codebase")
+def verified_codebase(run_id: str):
+    archive = RUNS / run_id / "verified-fixed-codebase.zip"
+    if not archive.exists():
+        raise HTTPException(404, "Verified codebase is not available for this run")
+    return FileResponse(archive, media_type="application/zip", filename=f"{run_id}-verified-fixed-codebase.zip")
