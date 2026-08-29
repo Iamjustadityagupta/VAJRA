@@ -17,3 +17,11 @@ def test_unknown_user_returns_empty():
 
     assert response.status_code == 200
     assert response.get_json()["count"] == 0
+
+
+def test_ping_works():
+    client = app.test_client()
+    response = client.get("/ping", query_string={"host": "localhost"})
+
+    assert response.status_code == 200
+    assert "PING localhost" in response.get_json()["output"]

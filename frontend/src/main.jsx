@@ -31,10 +31,12 @@ function App() {
 
   const eventMap = Object.fromEntries((result?.events || []).map((event) => [event.stage, event]));
   const attackResults = result?.attack_results || [];
+  const findings = result?.findings || [];
   const blocked = attackResults.filter((item) => item.status === 'BLOCKED').length;
   const checks = [
     ['Exploit reproduced', eventMap.REPRODUCE?.status === 'pass'],
-    ['Patch generated', eventMap.PATCH?.status === 'pass'],
+    ['Patch generated', (result?.events || []).some((e) => e.stage === 'PATCH' && e.message?.startsWith('Minimal targeted patch generated'))],
+    ['Patch preflight passed', (result?.events || []).some((e) => e.stage === 'PATCH' && e.preflight === true)],
     ['Patch survived attack', eventMap.ATTACK?.status === 'pass'],
     ['Regression tests passed', eventMap.VERIFY?.status === 'pass'],
     ['Rescan completed', eventMap.RESCAN?.status === 'pass'],

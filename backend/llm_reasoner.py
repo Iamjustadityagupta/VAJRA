@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import Any, Dict, Optional
 
 try:
@@ -14,12 +15,29 @@ class LLMReasoner:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "demo").lower()
         self.api_key = os.getenv("LLM_API_KEY", "")
-        # Set LLM_MODEL explicitly in .env for the model available to your API account.
         self.model = os.getenv("LLM_MODEL", "gpt-4.1-mini")
 
     @property
     def live(self) -> bool:
         return self.provider == "openai" and bool(self.api_key) and OpenAI is not None
+
+    @staticmethod
+    def _kind(finding: Dict[str, Any], source: str) -> str:
+        check_id = str(finding.get("check_id", "")).lower()
+        message = str(finding.get("extra", {}).get("message", "")).lower()
+        combined = f"{check_id} {message}"
+
+        if any(x in combined for x in ("command-injection", "command_injection", "shell", "subprocess")):
+            return "command-injection"
+        if any(x in combined for x in ("sql-injection", "sql_injection", "sqli")):
+            return "sql-injection"
+
+        lower = source.lower()
+        if "subprocess" in lower and "shell=true" in lower:
+            return "command-injection"
+        if "execute(query)" in lower and "+ name +" in lower:
+            return "sql-injection"
+        return "unknown"
 
     def reason_and_patch(
         self,
@@ -28,24 +46,28 @@ class LLMReasoner:
         reproduction: Dict[str, Any],
         previous_attempt: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        if not self.live:
-            return self._demo_reasoning(source)
+        kind = self._kind(finding, source)
+        if kind == "unknown":
+            raise ValueError("Demo reasoner could not classify the supplied finding")
 
-        client = OpenAI(api_key=self.api_key)
-        retry_context = ""
-        if previous_attempt:
-            retry_context = f"""
+        if not self.live:
+            result = self._demo_reasoning(source, kind)
+        else:
+            client = OpenAI(api_key=self.api_key)
+            retry_context = ""
+            if previous_attempt:
+                retry_context = f"""
 PREVIOUS PATCH ATTEMPT FAILED VALIDATION:
 {json.dumps(previous_attempt, indent=2)}
 
 Generate a different, safer patch and address the specific validation failure.
 """
 
-        prompt = f"""
+            prompt = f"""
 You are VAJRA, an autonomous defensive vulnerability-remediation reasoner.
 
-Analyze ONLY the supplied evidence. Do not invent files, APIs, test results,
-or verification claims.
+The ORIGINAL FINDING has already been classified as: {kind}
+You must remediate THIS finding and must not fix a different vulnerability instead.
 
 STATIC FINDING:
 {json.dumps(finding, indent=2)}
@@ -61,49 +83,72 @@ RELEVANT SOURCE FILE:
 
 Return a minimal targeted remediation. The patched_code field MUST contain the
 COMPLETE replacement contents of the supplied source file. Preserve unrelated
-functionality. Do not claim that the patch is verified; VAJRA verifies it
-separately through attack replay, regression tests, and rescanning.
+functionality and preserve other vulnerability-bearing code unless changing it
+is necessary for THIS finding. Do not claim that the patch is verified; VAJRA
+verifies it separately through preflight, attack replay, regression tests, and
+rescanning.
 """
 
-        response = client.responses.create(
-            model=self.model,
-            input=prompt,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "vajra_patch",
-                    "strict": True,
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "root_cause": {"type": "string"},
-                            "impact": {"type": "string"},
-                            "remediation": {"type": "string"},
-                            "patched_code": {"type": "string"},
+            response = client.responses.create(
+                model=self.model,
+                input=prompt,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "vajra_patch",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "root_cause": {"type": "string"},
+                                "impact": {"type": "string"},
+                                "remediation": {"type": "string"},
+                                "patched_code": {"type": "string"},
+                            },
+                            "required": ["root_cause", "impact", "remediation", "patched_code"],
+                            "additionalProperties": False,
                         },
-                        "required": ["root_cause", "impact", "remediation", "patched_code"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-        )
+                    }
+                },
+            )
+            result = json.loads(response.output_text)
+            if not result["patched_code"].strip():
+                raise ValueError("LLM returned an empty patch")
 
-        result = json.loads(response.output_text)
-        if not result["patched_code"].strip():
-            raise ValueError("LLM returned an empty patch")
+        result["finding_kind"] = kind
         return result
 
     @staticmethod
-    def _demo_reasoning(source: str) -> Dict[str, Any]:
-        patched = source.replace(
+    def _demo_reasoning(source: str, kind: str) -> Dict[str, Any]:
+        if kind == "command-injection":
+            old = (
+                '    command = "echo PING " + host\n'
+                '    output = subprocess.check_output(command, shell=True, text=True, timeout=3)'
+            )
+            replacement = (
+                '    output = subprocess.check_output(["echo", "PING", host], text=True, timeout=3)'
+            )
+            patched = source.replace(old, replacement, 1)
+            if patched == source:
+                raise ValueError("Demo reasoner could not identify the command-injection pattern")
+            return {
+                "root_cause": "User-controlled host input is concatenated into a shell command executed with shell=True.",
+                "impact": "An attacker can inject additional shell commands into the process.",
+                "remediation": "Avoid shell parsing and pass command arguments as a list with shell execution disabled.",
+                "patched_code": patched,
+            }
+
+        old = (
             '    query = "SELECT id, name FROM users WHERE name = \'" + name + "\'"\n'
-            '    rows = db.execute(query).fetchall()',
-            '    query = "SELECT id, name FROM users WHERE name = ?"\n'
-            '    rows = db.execute(query, (name,)).fetchall()',
-            1,
+            '    rows = get_db().execute(query).fetchall()'
         )
+        replacement = (
+            '    query = "SELECT id, name FROM users WHERE name = ?"\n'
+            '    rows = get_db().execute(query, (name,)).fetchall()'
+        )
+        patched = source.replace(old, replacement, 1)
         if patched == source:
-            raise ValueError("Demo reasoner could not identify the expected vulnerable SQL pattern")
+            raise ValueError("Demo reasoner could not identify the SQL-injection pattern")
         return {
             "root_cause": "User-controlled input is concatenated directly into a SQL query.",
             "impact": "An attacker can alter SQL query structure and retrieve unintended records.",

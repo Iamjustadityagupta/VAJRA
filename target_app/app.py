@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 import sqlite3
+import subprocess
 
 app = Flask(__name__)
 
@@ -18,10 +19,20 @@ def get_db():
 @app.get("/user")
 def user():
     name = request.args.get("name", "")
-    db = get_db()
 
-    # INTENTIONALLY VULNERABLE: user input is concatenated into SQL.
+    # INTENTIONALLY VULNERABLE: SQL injection.
     query = "SELECT id, name FROM users WHERE name = '" + name + "'"
-    rows = db.execute(query).fetchall()
+    rows = get_db().execute(query).fetchall()
 
     return jsonify({"count": len(rows), "users": [dict(row) for row in rows]})
+
+
+@app.get("/ping")
+def ping():
+    host = request.args.get("host", "localhost")
+
+    # INTENTIONALLY VULNERABLE: command injection.
+    command = "echo PING " + host
+    output = subprocess.check_output(command, shell=True, text=True, timeout=3)
+
+    return jsonify({"output": output.strip()})
