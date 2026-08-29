@@ -1,27 +1,36 @@
-# VAJRA Lightweight Demo
+# VAJRA Demo v0.4
 
-A working proof-of-concept for the finalized AI Kavach concept: Safe Clone → Discover → Reproduce → Reason → Patch → Attack → Verify → Rescan.
+VAJRA — Vulnerability Assessment, Judgement & Remediation Agent.
 
-## Run
+## v0.4 additions
 
-### Backend
-```bash
-cd backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
+- Live OpenAI reasoning/patch generation when configured.
+- LLM output is validated as Python before it can modify VAJRA-TWIN.
+- Bounded patch retry loop (default: 2 attempts, maximum 3).
+- Failed attack or regression validation causes the candidate patch to be rejected and the original twin restored.
+- Retry context is sent back to the reasoner so a second patch can address the failure.
+- Frontend now displays AI reasoning mode, root cause, remediation and patch-attempt count.
+- Backend health reports the active reasoning mode.
+- `.env` loading through python-dotenv.
+- Removed generated `__pycache__` files from the distributable project.
 
-Semgrep is optional. If installed, VAJRA uses it; otherwise the included deterministic fallback scanner detects the demo SQL injection.
+## Enable live AI reasoning
 
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
+1. Copy `.env.example` to `.env`.
+2. Set:
+   - `LLM_PROVIDER=openai`
+   - `LLM_API_KEY=<your key>`
+   - `LLM_MODEL=<your code-capable model>`
+3. Install backend requirements:
+   `pip install -r requirements.txt`
+4. Start the API from `backend`:
+   `python -m uvicorn main:app --reload`
 
-## Demo target
-Zip the contents of `target_app/` and upload the zip in the UI. The target intentionally contains a SQL injection for demonstration purposes.
+Without credentials, the workflow remains fully runnable in demo mode using the deterministic fallback.
+
+## Trust boundary
+
+The LLM proposes a patch. VAJRA does not trust that proposal by itself.
+A candidate patch is accepted only after exploit replay, regression verification,
+and rescan succeed. If validation fails, VAJRA restores the previous code and
+uses bounded retry reasoning to generate another candidate.

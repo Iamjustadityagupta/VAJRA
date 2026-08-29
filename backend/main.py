@@ -14,10 +14,15 @@ import uuid
 import zipfile
 
 BASE = Path(__file__).resolve().parent.parent
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE / ".env")
+except ImportError:
+    pass
 RUNS = BASE / "runs"
 RUNS.mkdir(exist_ok=True)
 
-app = FastAPI(title="VAJRA Demo", version="0.2.0")
+app = FastAPI(title="VAJRA Demo", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -115,31 +120,34 @@ def reproduce_with_flask(path: Path, payload: str):
         sys.modules.pop(module_name, None)
 
 
-def reason_and_patch(path: Path, finding):
-    text = path.read_text(errors="ignore")
+def read_relevant_source(path: Path, finding):
+    lines = path.read_text(errors="ignore").splitlines()
+    line_no = finding.get("start", {}).get("line") or 1
+    lo = max(0, line_no - 8)
+    hi = min(len(lines), line_no + 12)
+    return "\n".join(lines[lo:hi])
 
-    if "request.args.get" in text and "execute(query)" in text and "+ name +" in text:
-        patched = text.replace(
-            '    query = "SELECT * FROM users WHERE name = \'" + name + "\'"\n'
-            "    return db.execute(query)",
-            '    query = "SELECT * FROM users WHERE name = ?"\n'
-            "    return db.execute(query, (name,))",
-            1,
-        )
-        if patched != text:
-            return patched, {
-                "title": "SQL Injection",
-                "root_cause": "User-controlled input is concatenated directly into a SQL query.",
-                "remediation": "Use a parameterized query so input is treated as data rather than SQL.",
-                "confidence": "High",
-            }
 
-    return text, {
-        "title": finding.get("check_id", "Security finding"),
-        "root_cause": "Potentially unsafe data flow detected.",
-        "remediation": "Apply a targeted security fix.",
-        "confidence": "Medium",
-    }
+def validate_patch_syntax(patched: str, path: Path):
+    if path.suffix == ".py":
+        import ast
+        ast.parse(patched, filename=str(path))
+
+
+def reason_and_patch(path: Path, finding, reproduction, previous_attempt=None):
+    source = path.read_text(errors="ignore")
+    reasoner = LLMReasoner()
+    result = reasoner.reason_and_patch(
+        finding=finding,
+        source=source,
+        reproduction=reproduction,
+        previous_attempt=previous_attempt,
+    )
+    patched = result.pop("patched_code")
+    validate_patch_syntax(patched, path)
+    result["mode"] = "live" if reasoner.live else "demo"
+    result["model"] = reasoner.model if reasoner.live else "deterministic fallback"
+    return patched, result
 
 
 def run_regression_tests(twin: Path):
@@ -163,7 +171,7 @@ def write_evidence(run_dir: Path, payload):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "VAJRA", "version": "0.2.0"}
+    return {"ok": True, "service": "VAJRA", "version": "0.4.0", "llm_mode": "live" if LLMReasoner().live else "demo"}
 
 
 @app.post("/api/demo/run")
@@ -243,102 +251,122 @@ async def run_demo(file: UploadFile = File(...)):
         return result
 
     before = path.read_text(errors="ignore")
-    patched, reasoning = reason_and_patch(path, finding)
-    events.append(
-        emit(
-            "REASON",
-            "pass",
+    max_attempts = max(1, min(int(os.getenv("VAJRA_MAX_ATTEMPTS", "2")), 3))
+    attempt_history = []
+    accepted = False
+    final_reasoning = None
+    final_diff = ""
+    final_attack_results = []
+    final_regression_ok = False
+    final_pytest_output = ""
+    previous_failure = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            patched, reasoning = reason_and_patch(
+                path, finding,
+                {"payload": payload, "response": reproduction_output},
+                previous_failure,
+            )
+        except Exception as exc:
+            events.append(emit("REASON", "fail", f"Reasoning/patch generation failed: {exc}", attempt=attempt))
+            break
+
+        final_reasoning = reasoning
+        events.append(emit(
+            "REASON", "pass",
             "Root cause identified and remediation strategy selected.",
-            **reasoning,
-        )
-    )
+            attempt=attempt, **reasoning
+        ))
 
-    if patched == before:
-        events.append(emit("PATCH", "fail", "Could not safely apply an automated patch in this POC."))
-        result = {"run_id": run_id, "events": events, "findings": [finding], "status": "FAILED"}
-        write_evidence(run_dir, result)
-        return result
+        if patched == before:
+            events.append(emit("PATCH", "fail", "Generated patch made no changes.", attempt=attempt))
+            previous_failure = {"reason": "Patch made no changes."}
+            continue
 
-    path.write_text(patched)
-    diff = "".join(
-        difflib.unified_diff(
-            before.splitlines(True),
-            patched.splitlines(True),
-            fromfile=f"a/{rel}",
-            tofile=f"b/{rel}",
-        )
-    )
-    events.append(
-        emit("PATCH", "pass", "Minimal targeted patch generated and applied to VAJRA-TWIN.", file=rel)
-    )
+        path.write_text(patched)
+        diff = "".join(difflib.unified_diff(
+            before.splitlines(True), patched.splitlines(True),
+            fromfile=f"a/{rel}", tofile=f"b/{rel}"
+        ))
+        final_diff = diff
+        events.append(emit("PATCH", "pass", "Minimal targeted patch generated and applied to VAJRA-TWIN.", file=rel, attempt=attempt))
 
-    mutations = [
-        payload,
-        '" OR "1"="1',
-        "' UNION SELECT NULL--",
-        "admin'--",
-    ]
-    attack_results = []
-    for attack_payload in mutations:
-        exploitable, response = reproduce_with_flask(path, attack_payload)
-        attack_results.append(
-            {
+        mutations = [payload, '" OR "1"="1', "' UNION SELECT NULL--", "admin'--"]
+        attack_results = []
+        for attack_payload in mutations:
+            exploitable, response = reproduce_with_flask(path, attack_payload)
+            attack_results.append({
                 "payload": attack_payload,
                 "status": "EXPLOITABLE" if exploitable else "BLOCKED",
                 "response": response,
-            }
-        )
+            })
 
-    attack_ok = all(item["status"] == "BLOCKED" for item in attack_results)
-    events.append(
-        emit(
-            "ATTACK",
-            "pass" if attack_ok else "fail",
-            "Patch survived adversarial exploit replay."
-            if attack_ok
-            else "Patch still appears exploitable.",
-            tests=attack_results,
-        )
-    )
+        attack_ok = all(item["status"] == "BLOCKED" for item in attack_results)
+        final_attack_results = attack_results
+        events.append(emit(
+            "ATTACK", "pass" if attack_ok else "fail",
+            "Patch survived adversarial exploit replay." if attack_ok else "Patch still appears exploitable.",
+            tests=attack_results, attempt=attempt
+        ))
 
-    regression_ok, pytest_output = run_regression_tests(twin)
-    events.append(
-        emit(
-            "VERIFY",
-            "pass" if regression_ok and attack_ok else "fail",
-            "Regression and security verification passed."
-            if regression_ok and attack_ok
-            else "Verification failed.",
-            pytest_output=pytest_output,
-            regression_tests=regression_ok,
-        )
-    )
+        if not attack_ok:
+            previous_failure = {"attempt": attempt, "attack_results": attack_results, "reason": "At least one exploit remained effective."}
+            path.write_text(before)
+            attempt_history.append({"attempt": attempt, "status": "ATTACK_FAILED", "attack_results": attack_results})
+            continue
+
+        regression_ok, pytest_output = run_regression_tests(twin)
+        final_regression_ok = regression_ok
+        final_pytest_output = pytest_output
+        events.append(emit(
+            "VERIFY", "pass" if regression_ok else "fail",
+            "Regression and security verification passed." if regression_ok else "Regression verification failed.",
+            pytest_output=pytest_output, regression_tests=regression_ok, attempt=attempt
+        ))
+
+        if not regression_ok:
+            previous_failure = {"attempt": attempt, "pytest_output": pytest_output, "reason": "Regression tests failed."}
+            path.write_text(before)
+            attempt_history.append({"attempt": attempt, "status": "VERIFY_FAILED", "pytest_output": pytest_output})
+            continue
+
+        accepted = True
+        attempt_history.append({"attempt": attempt, "status": "PASSED"})
+        break
+
+    if not accepted:
+        # Ensure the working copy is not left with an unverified patch.
+        path.write_text(before)
 
     post_findings, post_engine = semgrep_scan(twin)
     remaining = len(post_findings)
     clean = remaining == 0
-    events.append(
-        emit(
-            "RESCAN",
-            "pass" if clean else "fail",
-            f"Rescan complete: {remaining} findings remain.",
-            remaining=remaining,
-            engine=post_engine,
-        )
-    )
+    events.append(emit(
+        "RESCAN", "pass" if clean and accepted else "fail",
+        f"Rescan complete: {remaining} findings remain." if clean else f"Rescan complete: {remaining} findings remain.",
+        remaining=remaining, engine=post_engine
+    ))
 
-    status = "VERIFIED" if reproduced and attack_ok and regression_ok and clean else "FAILED"
+    status = "VERIFIED" if accepted and clean else "FAILED"
+
     result = {
         "run_id": run_id,
         "events": events,
         "findings": [finding],
         "status": status,
-        "diff": diff,
-        "reasoning": reasoning,
-        "attack_results": attack_results,
+        "diff": final_diff,
+        "reasoning": final_reasoning or {},
+        "attack_results": final_attack_results,
         "file": rel,
         "engine": engine,
+        "llm_mode": (final_reasoning or {}).get("mode", "demo"),
+        "attempts": attempt_history,
+        "max_attempts": max_attempts,
+        "regression_tests": final_regression_ok,
+        "pytest_output": final_pytest_output,
     }
+
     write_evidence(run_dir, result)
     return result
 
