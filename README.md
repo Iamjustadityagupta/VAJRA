@@ -7,12 +7,54 @@
 ## Overview
 
 VAJRA is a lightweight proof-of-concept demonstrating an autonomous
-vulnerability-remediation loop.
+vulnerability-remediation loop:
 
-The v0.7 milestone expands the demonstration from a single vulnerability
-to a multi-vulnerability remediation workflow and validates the
-resulting fixes with adversarial replay, regression testing, and
-post-patch rescanning.
+``` text
+SAFE CLONE → DISCOVER → REPRODUCE → REASON → PATCH
+→ PREFLIGHT → ATTACK → REGRESSION → RESCAN → VERIFIED
+```
+
+The project focuses on a simple security principle:
+
+> **No patch is trusted until the original exploit fails, regression
+> tests pass, and the post-patch rescan is clean.**
+
+VAJRA works on an isolated **VAJRA-TWIN** rather than modifying the
+original target directly.
+
+------------------------------------------------------------------------
+
+# v0.8 --- Evidence & Run Intelligence
+
+v0.8 builds on the verified multi-vulnerability remediation loop
+established in v0.7 and makes the result substantially easier to inspect
+and demonstrate.
+
+### v0.8 capabilities
+
+-   Human-readable HTML Evidence Report
+-   Evidence Report API
+-   Evidence JSON access
+-   Patch Diff download
+-   Verified Codebase download
+-   Improved finding cards
+-   Vulnerability severity display
+-   Run summary statistics
+-   Per-finding remediation state
+-   Explicit VAJRA-TWIN status
+-   Pre/post-rescan summary
+-   Bounded remediation-attempt visualization
+-   Evidence-backed execution timeline
+-   Clickable timeline events linked to detailed evidence
+
+The timeline and dashboard consume the recorded run evidence rather than
+maintaining a separate execution history.
+
+------------------------------------------------------------------------
+
+# v0.8 Verification Model
+
+A successful run communicates the complete chain:
 
 ``` text
 SAFE CLONE
@@ -29,160 +71,196 @@ PREFLIGHT
     ↓
 ATTACK
     ↓
-VERIFY
+REGRESSION
     ↓
 RESCAN
     ↓
+EVIDENCE
+    ↓
 VERIFIED
 ```
 
-A successful run produces a verified fixed codebase, patch diff, and
-evidence report.
+For the established v0.7 security demonstration, the target contains:
 
-------------------------------------------------------------------------
+-   SQL Injection
+-   Command Injection
 
-# What VAJRA Demonstrates
-
-The current proof-of-concept demonstrates:
-
--   Safe cloning of an uploaded target codebase into a **VAJRA-TWIN**
--   Vulnerability discovery using Semgrep when available
--   Deterministic Python fallback discovery rules for the seeded demo
-    vulnerabilities
--   Vulnerability reproduction against the target application
--   Finding-aware reasoning and remediation
--   Minimal targeted patch generation
--   Patch syntax and security preflight
--   Vulnerability-specific adversarial replay
--   Regression testing with `pytest`
--   Post-patch vulnerability rescanning
--   Evidence collection for the complete remediation process
--   Verified fixed-codebase packaging after successful verification
-
-The core security principle is:
-
-> **No patch is trusted until the original exploit fails, regression
-> tests pass, and the post-patch rescan is clean.**
-
-An LLM-generated patch is therefore treated as a proposal, not as proof.
-
-------------------------------------------------------------------------
-
-# v0.7 Status
-
-**v0.7 is the current stable milestone.**
-
-The complete multi-vulnerability demonstration has been successfully
-verified with:
+The validated adversarial suite contains:
 
 ``` text
-SAFE CLONE              ✓
-DISCOVER                ✓
-REPRODUCE               ✓
-REASON                  ✓
-PATCH                   ✓
-PATCH PREFLIGHT         ✓
-ADVERSARIAL VALIDATION  7/7 attacks blocked
-REGRESSION TESTS        ✓
-RESCAN                  ✓
-REMAINING FINDINGS      0
-EVIDENCE                ACCEPTED
-FINAL STATUS            VERIFIED
+SQL Injection        4 payloads
+Command Injection    3 payloads
+                     ───────────
+Total                7 payloads
 ```
 
-The demo target contains two supported vulnerability classes:
-
-1.  SQL Injection
-2.  Command Injection
-
-The combined adversarial validation covers **7 payloads**:
-
-### SQL Injection --- 4 payloads
+The known-good v0.7 milestone achieved:
 
 ``` text
-' OR '1'='1
-" OR "1"="1
-' UNION SELECT NULL,NULL--
-admin'--
-```
-
-### Command Injection --- 3 payloads
-
-``` text
-localhost & echo VAJRA_PWNED
-localhost && echo VAJRA_PWNED
-localhost | echo VAJRA_PWNED
-```
-
-The command-injection payloads use shell separators that are meaningful
-for the Windows demonstration environment.
-
-------------------------------------------------------------------------
-
-# v0.7 Remediation Flow
-
-A vulnerability is considered remediated only when all required stages
-succeed:
-
-``` text
-1.  Discovered
-2.  Reproduced
-3.  Root cause reasoned about
-4.  Targeted patch generated
-5.  Patch preflight passed
-6.  Applicable attacks blocked
-7.  Regression tests passed
-8.  Post-patch rescan is clean
-9.  Evidence is produced
-```
-
-Only then does VAJRA return:
-
-``` text
+7/7 attacks blocked
+Regression tests passed
+Post-patch rescan clean
+0 remaining findings
+Evidence accepted
 VERIFIED
 ```
 
-If a candidate patch fails adversarial validation or regression testing,
-VAJRA rejects it and restores the original source before attempting
-another bounded remediation attempt.
+v0.8 does not replace these security gates. It exposes their evidence
+more clearly.
 
 ------------------------------------------------------------------------
 
-# Vulnerabilities in the Demo Target
+# Evidence Report
 
-The deliberately vulnerable Flask target contains two vulnerabilities in
-the same codebase.
+v0.8 adds a dedicated human-readable report generated from the stored
+run evidence.
 
-## 1. SQL Injection
+The report presents:
 
-The vulnerable user lookup originally follows this pattern:
+-   Final verification status
+-   Findings discovered
+-   Finding type
+-   Affected file and line
+-   Severity
+-   Reproduction evidence
+-   Root cause
+-   Impact
+-   Remediation
+-   Patch information
+-   Patch diff
+-   Adversarial validation
+-   Regression results
+-   Rescan results
+-   Verification checklist
+-   Run timeline
+
+The evidence report is derived from the same evidence data used by the
+backend, keeping the report aligned with the actual run.
+
+------------------------------------------------------------------------
+
+# Run Intelligence Dashboard
+
+The v0.8 dashboard summarizes the security result before exposing the
+detailed evidence.
+
+A verified run can be understood through:
+
+``` text
+FINDINGS DISCOVERED       2
+FINDINGS REMEDIATED       2
+ATTACKS BLOCKED           7/7
+REMAINING FINDINGS        0
+```
+
+Individual finding cards expose the vulnerability type, location,
+severity, and remediation state.
+
+The dashboard also distinguishes the isolated VAJRA-TWIN from the
+original target and the final verified output.
+
+------------------------------------------------------------------------
+
+# Run Timeline
+
+The v0.8 Run Timeline provides an evidence-backed chronological view of
+execution.
+
+Typical stages are:
+
+``` text
+✓ SAFE CLONE
+✓ DISCOVER
+✓ REPRODUCE
+✓ REASON
+✓ PATCH
+✓ PREFLIGHT
+✓ ATTACK
+✓ REGRESSION
+✓ RESCAN
+✓ VERIFIED
+```
+
+Each recorded event can be selected to inspect its existing detailed
+evidence.
+
+This makes the dashboard answer both:
+
+> **What is the final result?**
+
+and:
+
+> **How did VAJRA arrive at that result?**
+
+------------------------------------------------------------------------
+
+# Rescan Summary
+
+v0.8 presents the post-patch rescan as a before/after security result:
+
+``` text
+PRE-PATCH FINDINGS
+        ↓
+     RESOLVED
+        ↓
+POST-PATCH FINDINGS
+```
+
+The important acceptance condition remains:
+
+``` text
+REMAINING FINDINGS = 0
+```
+
+VAJRA must not display `VERIFIED` merely because an attack suite passed.
+
+------------------------------------------------------------------------
+
+# Artifacts
+
+A successful run provides access to:
+
+``` text
+Evidence Report
+Evidence JSON
+Patch Diff
+Verified Fixed Codebase
+```
+
+The verified codebase is produced only after the remediation gates
+succeed.
+
+------------------------------------------------------------------------
+
+# v0.7 Security Foundation
+
+v0.8 preserves the v0.7 security foundation.
+
+## SQL Injection
+
+The vulnerable target originally constructs SQL using
+attacker-controlled string concatenation:
 
 ``` python
 name = request.args.get("name", "")
-
 query = "SELECT id, name FROM users WHERE name = '" + name + "'"
 rows = get_db().execute(query).fetchall()
 ```
 
-The deterministic remediation converts it to parameterized SQL:
+The remediation uses parameterized SQL:
 
 ``` python
 query = "SELECT id, name FROM users WHERE name = ?"
 rows = get_db().execute(query, (name,)).fetchall()
 ```
 
-The attack suite verifies that injected SQL no longer changes the query
-structure.
+## Command Injection
 
-------------------------------------------------------------------------
-
-## 2. Command Injection
-
-The vulnerable `/ping` route originally follows this pattern:
+The vulnerable `/ping` route originally uses shell execution with
+attacker-controlled input:
 
 ``` python
 host = request.args.get("host", "localhost")
-
 command = "echo PING " + host
 output = subprocess.check_output(
     command,
@@ -192,199 +270,64 @@ output = subprocess.check_output(
 )
 ```
 
-The remediation removes shell execution and passes the
-attacker-controlled value as a separate argument.
+The v0.7 remediation removes shell parsing and uses structured
+arguments.
 
-The v0.7 implementation uses the current Python interpreter with
-structured subprocess arguments so that the demo works consistently on
-Windows:
-
-``` python
-output = subprocess.check_output(
-    [
-        sys.executable,
-        "-c",
-        "print('PING', __import__('sys').argv[1])",
-        host
-    ],
-    text=True,
-    timeout=3
-)
-```
-
-The important security properties are:
-
--   `shell=True` is removed
--   The host value is not concatenated into a shell command
--   The host value is passed as data
--   The patch is validated before attack replay
--   Adversarial payloads must fail to produce command execution
--   The application must still satisfy its regression tests
+For the Windows demonstration environment, the remediation uses the
+current Python interpreter so the fixed behavior is platform-compatible.
 
 ------------------------------------------------------------------------
 
-# Finding-Aware Reasoning
+# Finding-Aware Remediation
 
-One of the important v0.7 improvements is that remediation is tied to
-the **original finding identity**.
+VAJRA processes the original finding identity throughout remediation.
 
-The target contains both SQL injection and command injection. Earlier
-implementations could identify a vulnerable pattern in the source
-without reliably respecting which finding was currently being processed.
+The target contains multiple vulnerability classes, so the remediation
+layer must know whether it is processing:
 
-v0.7 fixes this by:
+``` text
+sql-injection
+```
 
--   Classifying the original finding
--   Locking the vulnerability class through remediation
--   Passing the finding kind explicitly into the reasoning layer
--   Selecting the corresponding patch strategy
--   Selecting the corresponding attack suite
--   Preventing a patch for one vulnerability from being used to
-    remediate another
+or:
 
-This enables the same target codebase to contain multiple vulnerability
-classes without cross-remediation.
+``` text
+command-injection
+```
+
+The reasoning layer selects the corresponding remediation strategy,
+while deterministic validation remains responsible for syntax checks,
+exploit replay, preflight, regression testing, and rescanning.
+
+This separation keeps the LLM responsible for reasoning and patch
+generation while deterministic code remains responsible for proving the
+result.
 
 ------------------------------------------------------------------------
 
-# Patch Preflight
+# Bounded Remediation
 
-Candidate patches are checked before adversarial replay.
+VAJRA uses bounded remediation attempts.
 
-## SQL Injection
-
-The preflight checks for:
-
--   Valid Python syntax
--   Removal of attacker-controlled SQL concatenation
--   Parameterized SQL binding
-
-## Command Injection
-
-The preflight uses Python AST inspection and source checks to validate
-that:
-
--   The patched Python is syntactically valid
--   `shell=True` is not retained
--   The command is not constructed by concatenating `host`
--   A subprocess invocation remains
--   Structured list/tuple arguments are used
-
-Preflight is an early safety gate. Passing preflight does **not** mean
-the patch is trusted; the patch must still survive adversarial
-validation and regression testing.
-
-------------------------------------------------------------------------
-
-# Adversarial Validation
-
-VAJRA replays vulnerability-specific attack payloads against the patched
-VAJRA-TWIN.
-
-The v0.7 target produces:
+The intended loop is:
 
 ``` text
-SQL Injection        4/4 blocked
-Command Injection    3/3 blocked
----------------------------------
-Total                 7/7 blocked
+PATCH
+  ↓
+PREFLIGHT / ATTACK / VERIFY
+  ↓
+FAIL
+  ↓
+REASON AGAIN
+  ↓
+NEW PATCH
+  ↓
+RETEST
 ```
 
-For command injection, VAJRA does not simply search the response for the
-marker string.
+There is a maximum attempt count.
 
-A safe patch may legitimately reflect attacker-controlled input as data.
-The validator therefore distinguishes:
-
-``` text
-PING <exact supplied payload>
-```
-
-from output showing that an additional command was actually executed.
-
-This prevents reflected attack input from being incorrectly treated as
-proof of successful exploitation.
-
-------------------------------------------------------------------------
-
-# Regression Verification
-
-Regression testing is a separate trust gate after adversarial replay.
-
-The backend:
-
-1.  Prefers `pytest`
-2.  Records the test output
-3.  Treats genuine application test failures as failures
-4.  Can use a controlled direct-test fallback when `pytest` is
-    unavailable or test collection fails
-5.  Never uses the fallback to hide genuine application regressions
-
-The v0.7 target regression suite passes successfully before a
-remediation is accepted.
-
-------------------------------------------------------------------------
-
-# Post-Patch Rescan
-
-After all findings have been processed, VAJRA rescans the modified
-VAJRA-TWIN.
-
-A successful run requires:
-
-``` text
-remaining findings = 0
-```
-
-The final status is:
-
-``` text
-VERIFIED
-```
-
-only when both the remediation workflow and the clean rescan succeed.
-
-If a finding remains, the run is:
-
-``` text
-FAILED
-```
-
-VAJRA does not force a successful verification state.
-
-------------------------------------------------------------------------
-
-# Evidence and Artifacts
-
-Each run creates evidence describing the remediation process.
-
-The evidence includes:
-
--   Run ID
--   Discovery results
--   Vulnerability classes
--   Reproduction payload and response
--   Root cause
--   Impact
--   Remediation strategy
--   Patch information
--   Patch diff
--   Patch preflight result
--   Adversarial attack results
--   Regression results
--   Rescan result
--   Final verification status
--   Processed finding information
--   Bounded remediation attempts
-
-For a verified run, VAJRA also packages the fixed codebase.
-
-The backend exposes:
-
-``` text
-GET /api/runs/{run_id}/evidence
-GET /api/runs/{run_id}/verified-codebase
-```
+The system does not use an unbounded autonomous loop.
 
 ------------------------------------------------------------------------
 
@@ -402,21 +345,20 @@ GET /api/runs/{run_id}/verified-codebase
                     │      VAJRA Engine     │
                     └───────────┬───────────┘
                                 │
-             ┌──────────────────┼──────────────────┐
-             │                  │                  │
-             ▼                  ▼                  ▼
-       Discovery            Reasoning          Verification
-       Semgrep /            Demo or Live        Preflight
-       Python Rules         LLM Reasoner        Attack Replay
-                                                 Regression
-                                                 Rescan
-             │                  │                  │
-             └──────────────────┼──────────────────┘
+          ┌─────────────────────┼─────────────────────┐
+          │                     │                     │
+          ▼                     ▼                     ▼
+     Discovery              Reasoning           Verification
+  Semgrep / Python         Demo / Live LLM       Preflight
+       Rules                                      Attack
+                                                  Regression
+                                                  Rescan
+          │                     │                     │
+          └─────────────────────┼─────────────────────┘
                                 ▼
                        ┌──────────────────┐
                        │    VAJRA-TWIN    │
-                       │ Isolated working │
-                       │      copy        │
+                       │  Isolated copy   │
                        └────────┬─────────┘
                                 │
                                 ▼
@@ -426,8 +368,7 @@ GET /api/runs/{run_id}/verified-codebase
                        └──────────────────┘
 ```
 
-The original uploaded codebase is protected separately from the
-remediation working copy.
+The original target remains separate from the remediation workspace.
 
 ------------------------------------------------------------------------
 
@@ -440,7 +381,7 @@ VAJRA-demo/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── llm_reasoner.py
-│   ├── reasoning_demo.py
+│   ├── evidence_report.py
 │   └── requirements.txt
 │
 ├── frontend/
@@ -456,6 +397,7 @@ VAJRA-demo/
 │   ├── test_app.py
 │   └── README.md
 │
+├── runs/
 ├── .env.example
 ├── .gitattributes
 ├── .gitignore
@@ -463,71 +405,25 @@ VAJRA-demo/
 └── vajra-demo-target.zip
 ```
 
-Runtime-generated run data is stored under:
+Runtime run artifacts are stored beneath:
 
 ``` text
-runs/
-└── VAJRA-<RUN_ID>/
-    ├── original/
-    ├── vajra-twin/
-    ├── upload.zip
-    ├── evidence.json
-    └── verified-fixed-codebase.zip
+runs/VAJRA-<RUN_ID>/
 ```
-
-The verified codebase archive is produced only for a successful
-`VERIFIED` run.
-
-------------------------------------------------------------------------
-
-# Technology Stack
-
--   **Python**
--   **FastAPI** --- VAJRA backend/API
--   **React + Vite** --- dashboard frontend
--   **Flask** --- deliberately vulnerable demonstration target
--   **SQLite** --- target application's demonstration database
--   **Semgrep** --- discovery when available
--   **Deterministic Python rules** --- fallback discovery for the seeded
-    demo
--   **OpenAI-compatible LLM layer** --- optional live reasoning
--   **pytest** --- regression testing
 
 ------------------------------------------------------------------------
 
 # Running the Demo
 
-## 1. Backend
-
-Create and activate a Python virtual environment, then install the
-backend dependencies:
+## Backend
 
 ``` bash
 cd backend
 pip install -r requirements.txt
-```
-
-Start the FastAPI service:
-
-``` bash
 uvicorn main:app --reload
 ```
 
-The backend exposes:
-
-``` text
-GET  /api/health
-GET  /api/llm-status
-POST /api/demo/run
-GET  /api/runs/{run_id}/evidence
-GET  /api/runs/{run_id}/verified-codebase
-```
-
-------------------------------------------------------------------------
-
-## 2. Frontend
-
-From the frontend directory:
+## Frontend
 
 ``` bash
 cd frontend
@@ -535,16 +431,19 @@ npm install
 npm run dev
 ```
 
-The frontend is a React/Vite dashboard for visualizing the VAJRA
-pipeline and verification evidence.
+Build the frontend for production with:
+
+``` bash
+npm run build
+```
 
 ------------------------------------------------------------------------
 
-# Environment Configuration
+# Environment
 
-Copy `.env.example` to `.env` in the project root.
+The deterministic demo can run without an LLM API key.
 
-The demonstration configuration is:
+Example configuration:
 
 ``` text
 LLM_PROVIDER=demo
@@ -553,202 +452,154 @@ LLM_MODEL=gpt-4.1-mini
 VAJRA_MAX_ATTEMPTS=2
 ```
 
-Demo mode is deterministic and can run without an LLM API key.
+Live LLM reasoning can be enabled through the configured environment
+variables.
 
-Live LLM reasoning can be configured through the environment when a
-supported provider and API key are available.
-
-------------------------------------------------------------------------
-
-# Demo Target
-
-The supplied target archive contains the deliberately vulnerable Flask
-application used by the POC.
-
-It contains:
+The architecture intentionally separates:
 
 ``` text
-app.py
-test_app.py
+LLM
+→ reasoning + patch generation
+
+Deterministic tooling
+→ execution + validation + verification
 ```
 
-The target is intentionally vulnerable and exists only for local
-security demonstration and validation.
-
-Do not deploy the vulnerable target as a production application.
-
 ------------------------------------------------------------------------
 
-# API Run Flow
+# API
 
-The main demonstration endpoint is:
+Important backend endpoints include:
 
 ``` text
+GET  /api/health
+GET  /api/llm-status
 POST /api/demo/run
+
+GET  /api/runs/{run_id}/evidence
+GET  /api/runs/{run_id}/report
+GET  /api/runs/{run_id}/diff
+GET  /api/runs/{run_id}/verified-codebase
 ```
 
-It accepts a target codebase archive and executes the remediation
-pipeline.
-
-A successful response contains the run ID, event stream, findings,
-reasoning information, attack results, regression information, rescan
-result, and verification status.
-
-For a verified run, artifact links are also returned for:
-
-``` text
-Verified fixed codebase
-Evidence report
-```
+The artifact endpoints expose the evidence generated by the completed
+remediation run.
 
 ------------------------------------------------------------------------
 
 # Version History
 
-## v0.1 --- Initial POC Scaffold
+## v0.1 --- Initial POC
 
--   Created the lightweight FastAPI + React/Vite application structure.
--   Added the vulnerable target application and basic test harness.
--   Established the VAJRA-TWIN concept for safe remediation.
--   Added the initial remediation dashboard.
+-   Lightweight VAJRA proof-of-concept
+-   Basic vulnerability discovery/remediation loop
+-   Safe clone / VAJRA-TWIN concept
 
 ## v0.2 --- Working Deterministic Security Loop
 
--   Added safe ZIP extraction and VAJRA-TWIN creation.
--   Added vulnerability discovery with Semgrep when available and
-    deterministic fallback detection.
--   Added actual SQL-injection reproduction against the cloned Flask
-    target.
--   Added deterministic patch generation.
--   Added adversarial payload replay.
--   Added pytest regression verification.
--   Added post-patch rescan.
--   Added evidence JSON for each run.
+-   Real Flask target execution
+-   SQL injection reproduction
+-   Basic adversarial replay
+-   Regression testing
+-   Post-patch validation
 
 ## v0.3 --- AI Reasoning Layer
 
--   Added the `LLMReasoner` abstraction.
--   Added root-cause, impact, and remediation reasoning.
--   Added structured patch-generation support.
--   Added live and demo reasoning modes.
--   Added environment-based LLM configuration.
+-   Provider-agnostic LLM reasoning
+-   Structured remediation output
+-   Demo/live reasoning modes
 
-## v0.4 --- Bounded Remediation Loop
+## v0.4 --- Bounded Remediation
 
--   Added bounded patch attempts.
--   Candidate patches are rejected when adversarial validation fails.
--   Candidate patches are rejected when regression tests fail.
--   Failed candidates are rolled back before another reasoning attempt.
--   Previous validation failures can be supplied to the next reasoning
-    attempt.
--   Added patch syntax validation before applying generated Python.
--   Improved frontend visibility of reasoning and verification state.
+-   Live LLM patch generation
+-   Bounded remediation retries
+-   Patch syntax validation
+-   Retry context
 
 ## v0.5 --- Realistic Vulnerable Target
 
--   Replaced simulated database behavior with a real SQLite-backed
-    target.
--   SQL injection now produces actual unintended database results.
--   Updated regression tests for real application behavior.
--   Improved attack-result evaluation using application responses.
--   Strengthened the structured LLM output contract.
--   Fixed the frontend JSX implementation and improved dashboard state
-    display.
+-   SQLite-backed vulnerable target
+-   Genuine SQL injection behavior
+-   Stronger structured LLM output
 
-## v0.6 --- Evidence-Backed Final Output
+## v0.6 --- Evidence-Oriented Output
 
--   Added a verified fixed-codebase ZIP for successful runs.
--   Added a downloadable evidence-report endpoint.
--   Added final-output actions to the dashboard.
--   Added model information to the AI Reasoning panel.
--   Improved live LLM configuration through environment-controlled model
-    selection.
--   Preserved deterministic fallback for offline demos.
--   Preserved the trust boundary: an LLM-generated patch is not accepted
-    until validation succeeds.
+-   Evidence/proof-oriented output
+-   Stronger verification architecture
 
-## v0.7 --- Multi-Vulnerability Autonomous Remediation
+## v0.7 --- Multi-Vulnerability Proof of Concept
 
--   Expanded the POC from a single SQL-injection scenario to multiple
-    vulnerability classes.
--   Added SQL injection and command injection as supported findings.
--   Added vulnerability-specific reproduction.
--   Added vulnerability-specific remediation strategies.
--   Added vulnerability-specific adversarial payload suites.
--   Added patch preflight validation before adversarial replay.
--   Added finding-aware reasoning so each finding receives the correct
-    remediation strategy.
--   Locked finding identity through the remediation pipeline.
--   Added aggregated attack evidence across processed findings.
--   Added AST-based command-injection preflight validation.
--   Added bounded retry behavior after validation or regression
-    failures.
--   Hardened regression verification with pytest-first execution and a
-    controlled direct-test fallback.
--   Made the command-injection remediation compatible with the Windows
-    demonstration environment.
--   Improved command-injection attack evaluation so reflected attacker
-    input is not mistaken for successful command execution.
--   Completed the full v0.7 verification loop with **7/7 adversarial
-    attacks blocked, regression tests passing, a clean rescan, and final
-    evidence accepted**.
+-   SQL injection + command injection
+-   Vulnerability-specific reproduction
+-   Finding-aware remediation
+-   Patch preflight
+-   Adversarial validation
+-   Regression verification
+-   Post-patch rescan
+-   7/7 adversarial attacks blocked
+-   Verified fixed-codebase output
 
-> Patch-level development work during the v0.7 line is consolidated into
-> the v0.7 milestone history rather than listed as separate README
-> releases.
+The intermediate v0.7.x fixes are intentionally consolidated into the
+v0.7 milestone rather than cluttering the milestone history.
+
+## v0.8 --- Evidence & Run Intelligence
+
+-   Added human-readable HTML Evidence Report
+-   Added Evidence Report API
+-   Added downloadable patch diff
+-   Improved finding cards
+-   Added vulnerability severity display
+-   Added run summary statistics
+-   Added explicit VAJRA-TWIN status
+-   Added pre/post-rescan summary
+-   Added bounded remediation-attempt visualization
+-   Added evidence-backed Run Timeline
+-   Made timeline events selectable for detailed inspection
+-   Expanded dashboard artifact access
 
 ------------------------------------------------------------------------
 
-# Deliberately Deferred Capabilities
+# Scope
 
-The broader VAJRA architecture can eventually include capabilities that
-are intentionally outside this lightweight POC:
+VAJRA is intentionally a lightweight demonstration rather than a
+complete production security platform.
 
--   Docker-grade isolation
--   PostgreSQL
--   Tree-sitter-based multi-language analysis
--   Syft / SBOM generation
--   OSV-Scanner
--   Atheris fuzzing
--   Broad multi-language vulnerability support
--   Production deployment and promotion
--   Large-scale multi-agent orchestration
--   Full dependency and supply-chain analysis
+The project does not currently attempt to implement every proposed
+production capability such as:
 
-The current project prioritizes a credible, demonstrable end-to-end
-security remediation loop over implementing every proposed production
-component.
+-   Production-grade container isolation
+-   PostgreSQL infrastructure
+-   Complete SBOM/dependency analysis
+-   Full Atheris fuzzing
+-   Broad multi-language support
+-   Kubernetes deployment
+-   Large multi-agent orchestration
+
+The purpose is to make the core idea convincing:
+
+> **AI-generated remediation + deterministic validation + adversarial
+> verification + evidence.**
 
 ------------------------------------------------------------------------
 
-# v0.7 Milestone Summary
+# Final Principle
 
-VAJRA v0.7 demonstrates the complete concept:
+A generated patch is not the result.
+
+The result is:
 
 ``` text
-DISCOVER
-    ↓
-REPRODUCE
-    ↓
-REASON
-    ↓
 PATCH
-    ↓
-PREFLIGHT
-    ↓
-ATTACK
-    ↓
-REGRESSION
-    ↓
-RESCAN
-    ↓
+  +
+EXPLOIT BLOCKED
+  +
+REGRESSION TESTS PASSED
+  +
+RESCAN CLEAN
+  +
+EVIDENCE
+  =
 VERIFIED
 ```
 
-The defining result is not simply that VAJRA can generate a patch.
-
-It is that VAJRA can **generate a targeted patch, attack that patch, run
-regression tests, rescan the result, and refuse to trust the remediation
-unless the evidence supports the fix.**
-
-**v0.7: VERIFIED.**
+**VAJRA doesn't just fix vulnerabilities. It proves the fix.**

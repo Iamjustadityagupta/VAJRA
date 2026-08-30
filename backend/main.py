@@ -1,4 +1,5 @@
 from llm_reasoner import LLMReasoner
+from evidence_report import write_report
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +27,7 @@ except ImportError:
 RUNS = BASE / "runs"
 RUNS.mkdir(exist_ok=True)
 
-app = FastAPI(title="VAJRA Demo", version="0.7.7")
+app = FastAPI(title="VAJRA Demo", version="0.8.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -486,7 +487,7 @@ def process_finding(twin, finding, max_attempts):
 @app.get("/api/health")
 def health():
     reasoner = LLMReasoner()
-    return {"ok": True, "service": "VAJRA", "version": "0.7.7", "llm_mode": "live" if reasoner.live else "demo"}
+    return {"ok": True, "service": "VAJRA", "version": "0.8.0", "llm_mode": "live" if reasoner.live else "demo"}
 
 
 @app.get("/api/llm-status")
@@ -547,7 +548,9 @@ async def run_demo(file: UploadFile = File(...)):
         package_verified_codebase(twin, run_dir)
         artifacts = {
             "verified_codebase": f"/api/runs/{run_id}/verified-codebase",
-            "evidence_report": f"/api/runs/{run_id}/evidence",
+            "evidence_report": f"/api/runs/{run_id}/report",
+            "evidence_json": f"/api/runs/{run_id}/evidence",
+            "patch_diff": f"/api/runs/{run_id}/diff",
         }
 
     result = {
@@ -572,6 +575,7 @@ async def run_demo(file: UploadFile = File(...)):
         "processed_findings": processed,
     }
     write_evidence(run_dir, result)
+    write_report(run_dir, result)
     return result
 
 
@@ -581,6 +585,36 @@ def evidence(run_id: str):
     if not evidence_file.exists():
         raise HTTPException(404, "Run not found")
     return FileResponse(evidence_file, media_type="application/json", filename=f"{run_id}-evidence.json")
+
+
+@app.get("/api/runs/{run_id}/report")
+def evidence_report(run_id: str):
+    run_dir = RUNS / run_id
+    evidence_file = run_dir / "evidence.json"
+    if not evidence_file.exists():
+        raise HTTPException(404, "Run not found")
+    report_file = run_dir / "evidence-report.html"
+    if not report_file.exists():
+        payload = json.loads(evidence_file.read_text(encoding="utf-8"))
+        write_report(run_dir, payload)
+    return FileResponse(report_file, media_type="text/html", filename=f"{run_id}-evidence-report.html")
+
+
+@app.get("/api/runs/{run_id}/diff")
+def patch_diff(run_id: str):
+    run_dir = RUNS / run_id
+    evidence_file = run_dir / "evidence.json"
+    if not evidence_file.exists():
+        raise HTTPException(404, "Run not found")
+
+    payload = json.loads(evidence_file.read_text(encoding="utf-8"))
+    diff = payload.get("diff", "")
+    if not diff:
+        raise HTTPException(404, "Patch diff is not available for this run")
+
+    diff_file = run_dir / "patch.diff"
+    diff_file.write_text(diff, encoding="utf-8")
+    return FileResponse(diff_file, media_type="text/plain", filename=f"{run_id}-patch.diff")
 
 
 @app.get("/api/runs/{run_id}/verified-codebase")
