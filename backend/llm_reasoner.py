@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 from typing import Any, Dict, Optional
 
 try:
@@ -126,15 +127,17 @@ rescanning.
                 '    output = subprocess.check_output(command, shell=True, text=True, timeout=3)'
             )
             replacement = (
-                '    output = subprocess.check_output(["echo", "PING", host], text=True, timeout=3)'
+                '    output = subprocess.check_output([sys.executable, "-c", "print(\'PING\', __import__(\'sys\').argv[1])", host], text=True, timeout=3)'
             )
             patched = source.replace(old, replacement, 1)
+            if patched != source and "import sys" not in patched:
+                patched = "import sys\n" + patched
             if patched == source:
                 raise ValueError("Demo reasoner could not identify the command-injection pattern")
             return {
                 "root_cause": "User-controlled host input is concatenated into a shell command executed with shell=True.",
                 "impact": "An attacker can inject additional shell commands into the process.",
-                "remediation": "Avoid shell parsing and pass command arguments as a list with shell execution disabled.",
+                "remediation": "Avoid shell parsing and execute the fixed command through the current Python interpreter using structured arguments with shell execution disabled.",
                 "patched_code": patched,
             }
 

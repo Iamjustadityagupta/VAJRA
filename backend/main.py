@@ -161,8 +161,17 @@ def reproduce_finding(path: Path, finding, payload: str, kind: str | None = None
                 body = response.get_json(silent=True)
                 if body is None:
                     return False, response.get_data(as_text=True)
-                # The injected marker appears as a second command's output.
-                return "VAJRA_PWNED" in body.get("output", ""), json.dumps(body)
+
+                # A safe shell-free patch legitimately reflects the supplied host
+                # in the PING output. Exploitation is therefore NOT determined
+                # by merely finding the marker string in the response. The safe
+                # behavior is an exact single-command result: "PING <payload>".
+                # A shell-injected execution produces additional command output
+                # (for the seeded payloads, a separate VAJRA_PWNED line).
+                output = str(body.get("output", ""))
+                expected_safe_output = f"PING {payload}"
+                exploited = output != expected_safe_output
+                return exploited, json.dumps(body)
 
             response = client.get("/user", query_string={"name": payload})
             body = response.get_json(silent=True)
@@ -179,7 +188,7 @@ def reproduce_finding(path: Path, finding, payload: str, kind: str | None = None
 def exploit_payloads_for_kind(kind):
     if kind == "command-injection":
         return [
-            "localhost; echo VAJRA_PWNED",
+            "localhost & echo VAJRA_PWNED",
             "localhost && echo VAJRA_PWNED",
             "localhost | echo VAJRA_PWNED",
         ]
