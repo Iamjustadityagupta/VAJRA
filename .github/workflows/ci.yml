@@ -66,3 +66,72 @@ jobs:
 
       - name: Build frontend Docker image
         run: docker compose build frontend
+
+  integration:
+    name: Full Stack Integration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start VAJRA stack
+        run: docker compose up -d --build
+
+      - name: Show running containers
+        run: docker compose ps
+
+      - name: Wait for backend health
+        shell: bash
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/api/health > /tmp/backend-health.json; then
+              echo "Backend is healthy."
+              cat /tmp/backend-health.json
+              exit 0
+            fi
+
+            echo "Waiting for backend... attempt $i/30"
+            sleep 2
+          done
+
+          echo "Backend did not become healthy."
+          docker compose ps
+          docker compose logs backend --tail=100
+          exit 1
+
+      - name: Verify frontend
+        shell: bash
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/ > /tmp/frontend.html; then
+              echo "Frontend is reachable."
+              head -c 500 /tmp/frontend.html
+              echo
+              exit 0
+            fi
+
+            echo "Waiting for frontend... attempt $i/30"
+            sleep 2
+          done
+
+          echo "Frontend did not become reachable."
+          docker compose ps
+          docker compose logs frontend --tail=100
+          exit 1
+
+      - name: Show service status
+        if: always()
+        run: docker compose ps
+
+      - name: Show backend logs on failure
+        if: failure()
+        run: docker compose logs backend --tail=100
+
+      - name: Show frontend logs on failure
+        if: failure()
+        run: docker compose logs frontend --tail=100
+
+      - name: Stop VAJRA stack
+        if: always()
+        run: docker compose down -v
