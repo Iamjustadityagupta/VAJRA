@@ -1,8 +1,10 @@
+from __future__ import annotations
+
+import ast
 import json
 import os
-import re
-import sys
-from typing import Any, Dict, Optional
+import shlex
+from typing import Any
 
 try:
     from openai import OpenAI
@@ -11,7 +13,12 @@ except ImportError:  # pragma: no cover
 
 
 class LLMReasoner:
-    """Provider-agnostic reasoning and patch-generation layer for VAJRA."""
+    """Provider-agnostic remediation layer.
+
+    Demo mode is deterministic and uses AST transformations. Live mode sends the
+    locked finding, evidence and complete source to a code-capable LLM. Validation
+    is never delegated to the LLM.
+    """
 
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "demo").lower()
@@ -23,94 +30,62 @@ class LLMReasoner:
         return self.provider == "openai" and bool(self.api_key) and OpenAI is not None
 
     @staticmethod
-    def _kind(finding: Dict[str, Any], source: str) -> str:
-        check_id = str(finding.get("check_id", "")).lower()
-        message = str(finding.get("extra", {}).get("message", "")).lower()
-        combined = f"{check_id} {message}"
-
-        if any(x in combined for x in ("command-injection", "command_injection", "shell", "subprocess")):
+    def _kind(finding: dict[str, Any]) -> str:
+        metadata = finding.get("extra", {}).get("metadata", {})
+        if metadata.get("kind") in {"sql-injection", "command-injection"}:
+            return metadata["kind"]
+        text = f"{finding.get('check_id', '')} {finding.get('extra', {}).get('message', '')}".lower()
+        if any(x in text for x in ("command-injection", "command_injection", "shell", "subprocess")):
             return "command-injection"
-        if any(x in combined for x in ("sql-injection", "sql_injection", "sqli")):
-            return "sql-injection"
-
-        lower = source.lower()
-        if "subprocess" in lower and "shell=true" in lower:
-            return "command-injection"
-        if "execute(query)" in lower and "+ name +" in lower:
+        if any(x in text for x in ("sql-injection", "sql_injection", "sqli")):
             return "sql-injection"
         return "unknown"
 
-    def reason_and_patch(
-        self,
-        finding: Dict[str, Any],
-        source: str,
-        reproduction: Dict[str, Any],
-        previous_attempt: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        kind = self._kind(finding, source)
+    def reason_and_patch(self, finding, source, reproduction, previous_attempt=None):
+        kind = self._kind(finding)
         if kind == "unknown":
-            raise ValueError("Demo reasoner could not classify the supplied finding")
+            raise ValueError("VAJRA could not classify the supplied finding")
 
         if not self.live:
-            result = self._demo_reasoning(source, kind)
+            result = self._demo_reasoning(finding, source, kind)
         else:
             client = OpenAI(api_key=self.api_key)
-            retry_context = ""
+            retry = ""
             if previous_attempt:
-                retry_context = f"""
-PREVIOUS PATCH ATTEMPT FAILED VALIDATION:
-{json.dumps(previous_attempt, indent=2)}
-
-Generate a different, safer patch and address the specific validation failure.
-"""
-
+                retry = f"\nPREVIOUS VALIDATION FAILURE:\n{json.dumps(previous_attempt, indent=2)}\n"
             prompt = f"""
-You are VAJRA, an autonomous defensive vulnerability-remediation reasoner.
+You are VAJRA, a defensive vulnerability-remediation agent.
 
-The ORIGINAL FINDING has already been classified as: {kind}
-You must remediate THIS finding and must not fix a different vulnerability instead.
+Original vulnerability class: {kind}
+You MUST remediate this finding and must not fix another finding instead.
+Do not claim verification. Return complete replacement source.
 
 STATIC FINDING:
 {json.dumps(finding, indent=2)}
 
 REPRODUCTION EVIDENCE:
 {json.dumps(reproduction, indent=2)}
-{retry_context}
+{retry}
 
-RELEVANT SOURCE FILE:
+COMPLETE SOURCE FILE:
 ```python
 {source}
 ```
-
-Return a minimal targeted remediation. The patched_code field MUST contain the
-COMPLETE replacement contents of the supplied source file. Preserve unrelated
-functionality and preserve other vulnerability-bearing code unless changing it
-is necessary for THIS finding. Do not claim that the patch is verified; VAJRA
-verifies it separately through preflight, attack replay, regression tests, and
-rescanning.
 """
-
             response = client.responses.create(
                 model=self.model,
                 input=prompt,
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "vajra_patch",
-                        "strict": True,
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "root_cause": {"type": "string"},
-                                "impact": {"type": "string"},
-                                "remediation": {"type": "string"},
-                                "patched_code": {"type": "string"},
-                            },
-                            "required": ["root_cause", "impact", "remediation", "patched_code"],
-                            "additionalProperties": False,
-                        },
-                    }
-                },
+                text={"format": {"type": "json_schema", "name": "vajra_patch", "strict": True, "schema": {
+                    "type": "object",
+                    "properties": {
+                        "root_cause": {"type": "string"},
+                        "impact": {"type": "string"},
+                        "remediation": {"type": "string"},
+                        "patched_code": {"type": "string"},
+                    },
+                    "required": ["root_cause", "impact", "remediation", "patched_code"],
+                    "additionalProperties": False,
+                }}},
             )
             result = json.loads(response.output_text)
             if not result["patched_code"].strip():
@@ -120,41 +95,167 @@ rescanning.
         return result
 
     @staticmethod
-    def _demo_reasoning(source: str, kind: str) -> Dict[str, Any]:
-        if kind == "command-injection":
-            old = (
-                '    command = "echo PING " + host\n'
-                '    output = subprocess.check_output(command, shell=True, text=True, timeout=3)'
-            )
-            replacement = (
-                '    output = subprocess.check_output([sys.executable, "-c", "print(\'PING\', __import__(\'sys\').argv[1])", host], text=True, timeout=3)'
-            )
-            patched = source.replace(old, replacement, 1)
-            if patched != source and "import sys" not in patched:
-                patched = "import sys\n" + patched
-            if patched == source:
-                raise ValueError("Demo reasoner could not identify the command-injection pattern")
+    def _request_variables(tree: ast.AST) -> dict[str, str]:
+        result = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                continue
+            if not isinstance(node.value, ast.Call) or not isinstance(node.value.func, ast.Attribute):
+                continue
+            base = node.value.func.value
+            if isinstance(base, ast.Name) and base.id == "request" or isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and base.value.id == "request":
+                parameter = str(node.value.args[0].value) if node.value.args and isinstance(node.value.args[0], ast.Constant) else "input"
+                result[node.targets[0].id] = parameter
+        return result
+
+    @staticmethod
+    def _flatten(expr: ast.AST, tainted: set[str]):
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return [("text", expr.value)]
+        if isinstance(expr, ast.Name) and expr.id in tainted:
+            return [("var", expr.id)]
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+            left = LLMReasoner._flatten(expr.left, tainted)
+            right = LLMReasoner._flatten(expr.right, tainted)
+            return None if left is None or right is None else left + right
+        if isinstance(expr, ast.JoinedStr):
+            parts = []
+            for value in expr.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    parts.append(("text", value.value))
+                elif isinstance(value, ast.FormattedValue) and isinstance(value.value, ast.Name) and value.value.id in tainted:
+                    parts.append(("var", value.value.id))
+                else:
+                    return None
+            return parts
+        return None
+
+    @staticmethod
+    def _unparse(tree: ast.AST) -> str:
+        ast.fix_missing_locations(tree)
+        return ast.unparse(tree) + "\n"
+
+    @classmethod
+    def _demo_reasoning(cls, finding, source: str, kind: str):
+        tree = ast.parse(source)
+        metadata = finding.get("extra", {}).get("metadata", {})
+        request_vars = cls._request_variables(tree)
+        source_var = metadata.get("source_variable") or next(iter(request_vars), None)
+        if not source_var:
+            raise ValueError("Could not identify attacker-controlled request input")
+
+        if kind == "sql-injection":
+            assignments = {}
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    assignments[node.targets[0].id] = node.value
+
+            changed = False
+            query_bindings: dict[str, list[str]] = {}
+
+            class SQLFix(ast.NodeTransformer):
+                def visit_Assign(self, node):
+                    nonlocal changed
+                    node = self.generic_visit(node)
+                    if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+                        return node
+                    parts = cls._flatten(node.value, {source_var})
+                    if parts and any(kind_part == "var" for kind_part, _ in parts):
+                        variables = [v for kind_part, v in parts if kind_part == "var"]
+                        query = "".join("?" if kind_part == "var" else value for kind_part, value in parts)
+                        node.value = ast.Constant(query)
+                        query_bindings[node.targets[0].id] = variables
+                        changed = True
+                    return node
+
+                def visit_Call(self, node):
+                    nonlocal changed
+                    node = self.generic_visit(node)
+                    if not isinstance(node.func, ast.Attribute) or node.func.attr not in {"execute", "executemany", "executescript"} or not node.args:
+                        return node
+                    if node.func.attr == "executescript":
+                        # executescript has no DB-API parameter slot; convert the
+                        # common dynamic statement to execute() with bound values.
+                        pass
+                    query_arg = node.args[0]
+                    parts = None
+                    variables = []
+                    if isinstance(query_arg, ast.Name) and query_arg.id in query_bindings:
+                        variables = query_bindings[query_arg.id]
+                        query_value = query_arg.id
+                        if query_value in assignments:
+                            parts = cls._flatten(assignments[query_value], {source_var})
+                    else:
+                        parts = cls._flatten(query_arg, {source_var})
+                    if parts and any(kind_part == "var" for kind_part, _ in parts):
+                        variables = [v for kind_part, v in parts if kind_part == "var"]
+                        query = "".join("?" if kind_part == "var" else value for kind_part, value in parts)
+                        node.args[0] = ast.Constant(query)
+                        if node.func.attr == "executescript":
+                            node.func.attr = "execute"
+                        node.args = node.args[:1] + [ast.Tuple(elts=[ast.Name(id=v, ctx=ast.Load()) for v in variables], ctx=ast.Load())]
+                        changed = True
+                    elif isinstance(query_arg, ast.Name) and query_arg.id in query_bindings and len(node.args) == 1:
+                        node.args.append(ast.Tuple(elts=[ast.Name(id=v, ctx=ast.Load()) for v in query_bindings[query_arg.id]], ctx=ast.Load()))
+                        changed = True
+                    return node
+
+            new_tree = SQLFix().visit(tree)
+            if not changed:
+                raise ValueError("Demo reasoner could not identify a supported dynamic SQL construction")
             return {
-                "root_cause": "User-controlled host input is concatenated into a shell command executed with shell=True.",
-                "impact": "An attacker can inject additional shell commands into the process.",
-                "remediation": "Avoid shell parsing and execute the fixed command through the current Python interpreter using structured arguments with shell execution disabled.",
-                "patched_code": patched,
+                "root_cause": "Attacker-controlled request data is embedded into a SQL statement.",
+                "impact": "Injected syntax can alter query semantics or expose unintended records.",
+                "remediation": "Use a constant SQL statement and bind attacker-controlled values as DB-API parameters.",
+                "patched_code": cls._unparse(new_tree),
             }
 
-        old = (
-            '    query = "SELECT id, name FROM users WHERE name = \'" + name + "\'"\n'
-            '    rows = get_db().execute(query).fetchall()'
-        )
-        replacement = (
-            '    query = "SELECT id, name FROM users WHERE name = ?"\n'
-            '    rows = get_db().execute(query, (name,)).fetchall()'
-        )
-        patched = source.replace(old, replacement, 1)
+        class CommandFix(ast.NodeTransformer):
+            def visit_Call(self, node):
+                node = self.generic_visit(node)
+                if not node.args:
+                    return node
+                is_subprocess = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"
+                is_os_shell = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "os" and node.func.attr in {"system", "popen"}
+                if not (is_subprocess or is_os_shell):
+                    return node
+
+                expr = node.args[0]
+                if isinstance(expr, ast.Name):
+                    for candidate in ast.walk(tree):
+                        if isinstance(candidate, ast.Assign) and len(candidate.targets) == 1 and isinstance(candidate.targets[0], ast.Name) and candidate.targets[0].id == expr.id:
+                            expr = candidate.value
+                            break
+                parts = cls._flatten(expr, {source_var})
+                if not parts or not any(part_kind == "var" for part_kind, _ in parts):
+                    return node
+
+                tokens: list[ast.AST] = []
+                for part_kind, value in parts:
+                    if part_kind == "var":
+                        tokens.append(ast.Name(id=value, ctx=ast.Load()))
+                    else:
+                        for token in shlex.split(value, posix=True):
+                            tokens.append(ast.Constant(token))
+                if not tokens:
+                    return node
+
+                if is_os_shell:
+                    node.func = ast.Attribute(value=ast.Name(id="subprocess", ctx=ast.Load()), attr="run", ctx=ast.Load())
+                    node.args[0] = ast.List(elts=tokens, ctx=ast.Load())
+                    node.keywords = [ast.keyword(arg="check", value=ast.Constant(False)), ast.keyword(arg="capture_output", value=ast.Constant(True)), ast.keyword(arg="text", value=ast.Constant(True))]
+                else:
+                    node.args[0] = ast.List(elts=tokens, ctx=ast.Load())
+                    node.keywords = [kw for kw in node.keywords if kw.arg != "shell"]
+                return node
+
+        new_tree = CommandFix().visit(tree)
+        patched = cls._unparse(new_tree)
         if patched == source:
-            raise ValueError("Demo reasoner could not identify the SQL-injection pattern")
+            raise ValueError("Demo reasoner could not identify a supported dynamic shell command")
         return {
-            "root_cause": "User-controlled input is concatenated directly into a SQL query.",
-            "impact": "An attacker can alter SQL query structure and retrieve unintended records.",
-            "remediation": "Use a parameterized query so the user input is bound as data.",
+            "root_cause": "Attacker-controlled request data reaches an operating-system command through dynamic shell construction.",
+            "impact": "Shell metacharacters can execute unintended operating-system commands.",
+            "remediation": "Disable shell parsing and pass the executable and arguments as a structured list.",
             "patched_code": patched,
         }

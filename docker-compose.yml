@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vajra}
+      POSTGRES_USER: ${POSTGRES_USER:-vajra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - vajra-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vajra} -d ${POSTGRES_DB:-vajra}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        TARGETARCH: ${TARGETARCH:-amd64}
+        SYFT_VERSION: ${SYFT_VERSION:-1.33.0}
+        OSV_VERSION: ${OSV_VERSION:-2.2.2}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-vajra}:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-vajra}
+      LLM_PROVIDER: ${LLM_PROVIDER:-demo}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+      VAJRA_MAX_ATTEMPTS: ${VAJRA_MAX_ATTEMPTS:-3}
+      VAJRA_MAX_UPLOAD_MB: ${VAJRA_MAX_UPLOAD_MB:-25}
+      VAJRA_CORS_ORIGINS: ${VAJRA_CORS_ORIGINS:-http://localhost:8080}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - vajra-runs:/app/runs
+      - ./runs:/app/runs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    pids_limit: 256
+    mem_limit: 1g
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  vajra-postgres:
+  vajra-runs:

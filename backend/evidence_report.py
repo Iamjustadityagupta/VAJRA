@@ -154,6 +154,8 @@ footer {{ margin-top:45px; padding-top:20px; border-top:1px solid var(--line); c
 
 <section><div class="panel"><h2>Verification Checklist</h2><ul class="checks">{check_html}</ul></div></section>
 
+<section><div class="panel"><h2>Security Toolchain</h2><p><b>Static analysis:</b> {_esc(evidence.get("engine", "—"))}</p><p><b>Dependency analysis:</b> {_esc("Syft / OSV-Scanner")}</p><p><b>Fuzzing:</b> {_esc("Atheris")}</p><p><b>LLM mode:</b> {_esc(evidence.get("llm_mode", "demo"))}</p></div></section>
+
 <section><div class="panel"><h2>Discovered Findings</h2><table><thead><tr><th>TYPE</th><th>FILE</th><th>LINE</th><th>SEVERITY</th><th>DESCRIPTION</th></tr></thead><tbody>{''.join(finding_rows)}</tbody></table></div></section>
 
 <section><h2>Processed Findings</h2><div class="finding-grid">{''.join(processed_sections) or '<div class="panel">No processed findings.</div>'}</div></section>
