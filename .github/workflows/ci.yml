@@ -135,3 +135,27 @@ jobs:
       - name: Stop VAJRA stack
         if: always()
         run: docker compose down -v
+
+  security:
+    name: Semgrep Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Semgrep
+        run: pip install "semgrep>=1.130.0"
+
+      - name: Run VAJRA security rules
+        run: |
+          semgrep \
+            --config backend/semgrep.yml \
+            backend \
+            --error \
+            --metrics=off
