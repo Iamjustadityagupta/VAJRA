@@ -250,9 +250,37 @@ COMPLETE SOURCE FILE:
                 return node
 
         new_tree = CommandFix().visit(tree)
+
+        # Ensure generated Command Injection patches import subprocess.
+        has_subprocess_usage = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            for node in ast.walk(new_tree)
+        )
+
+        if has_subprocess_usage:
+            has_subprocess_import = any(
+                isinstance(node, ast.Import)
+                and any(alias.name == "subprocess" for alias in node.names)
+                for node in new_tree.body
+            )
+
+            if not has_subprocess_import:
+                new_tree.body.insert(
+                    0,
+                    ast.Import(
+                        names=[ast.alias(name="subprocess", asname=None)]
+                    ),
+                )
+
         patched = cls._unparse(new_tree)
+
         if patched == source:
-            raise ValueError("Demo reasoner could not identify a supported dynamic shell command")
+            raise ValueError(
+                "Demo reasoner could not identify a supported dynamic shell command"
+            )
         return {
             "root_cause": "Attacker-controlled request data reaches an operating-system command through dynamic shell construction.",
             "impact": "Shell metacharacters can execute unintended operating-system commands.",
