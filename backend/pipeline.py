@@ -264,7 +264,9 @@ def reproduce_finding(
     # Command injection:
     # our controlled payload causes the target to emit this marker.
     if kind == "command-injection":
-        return "VAJRA_CMD_MARKER" in body, body
+       command_output = completed.stdout
+       reproduced = "VAJRA_CMD_MARKER" in command_output
+       return reproduced, command_output
 
     # SQL injection:
     # server/database errors are one strong reproduction signal.
