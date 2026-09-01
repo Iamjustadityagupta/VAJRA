@@ -159,3 +159,50 @@ jobs:
             backend \
             --error \
             --metrics=off
+
+  dependencies:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker compose build backend
+
+      - name: Create temporary backend container
+        run: |
+          docker create --name vajra-backend-scan vajra-backend:latest
+
+      - name: Extract installed Python packages
+        run: |
+          mkdir -p scan/site-packages
+          docker cp vajra-backend-scan:/usr/local/lib/python3.12/site-packages/. scan/site-packages/
+
+      - name: Generate SBOM with Syft
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/scan:/scan" \
+            vajra-backend:latest \
+            syft dir:/scan/site-packages \
+            -o cyclonedx-json=/scan/backend-installed-packages.cdx.json
+
+      - name: Scan SBOM with OSV-Scanner
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/scan:/scan" \
+            vajra-backend:latest \
+            osv-scanner scan /scan/backend-installed-packages.cdx.json
+
+      - name: Upload dependency SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: vajra-dependency-sbom
+          path: scan/backend-installed-packages.cdx.json
+          if-no-files-found: error
+
+      - name: Remove temporary container
+        if: always()
+        run: docker rm -f vajra-backend-scan || true
