@@ -4,12 +4,15 @@ import ast
 import json
 import os
 import shlex
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
-try:
+if TYPE_CHECKING:
     from openai import OpenAI
-except ImportError:  # pragma: no cover
-    OpenAI = None
+else:
+    try:
+        from openai import OpenAI
+    except ImportError:  # pragma: no cover
+        OpenAI = None
 
 
 class LLMReasoner:
