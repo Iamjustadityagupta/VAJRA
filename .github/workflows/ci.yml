@@ -183,6 +183,7 @@ jobs:
       - name: Generate SBOM with Syft
         run: |
           docker run --rm \
+            --user 0:0 \
             -v "${{ github.workspace }}/scan:/scan" \
             vajra-backend:latest \
             syft dir:/scan/site-packages \
