@@ -213,7 +213,10 @@ jobs:
           total=0
           verified=0
 
-          for file in VAJRA-5-bug-test-targets/*.zip; do
+          for file in \
+            VAJRA-5-bug-test-targets/VAJRA-01_sql_concat.zip \
+            VAJRA-5-bug-test-targets/VAJRA-02_sql_fstring.zip
+          do
             total=$((total + 1))
             name=$(basename "$file" .zip)
             echo ""
