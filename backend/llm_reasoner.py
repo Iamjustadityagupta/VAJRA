@@ -248,6 +248,7 @@ COMPLETE SOURCE FILE:
         class CommandFix(ast.NodeTransformer):
             def visit_Call(self, node):
                 node = self.generic_visit(node)
+
                 if not node.args:
                     return node
 
@@ -280,7 +281,64 @@ COMPLETE SOURCE FILE:
                             expr = candidate.value
                             break
 
-                parts = cls._flatten(expr, {source_var})
+                # Handle:
+                #     command + " > " + output_file.name
+                #
+                # The shell redirection must NOT be passed to a shell.
+                # Instead, preserve the destination as subprocess stdout.
+                redirect_target = None
+                command_expr = expr
+
+                def split_redirection(value):
+                    if not (
+                        isinstance(value, ast.BinOp)
+                        and isinstance(value.op, ast.Add)
+                    ):
+                        return value, None
+
+                    right = value.right
+
+                    if not (
+                        isinstance(right, ast.Attribute)
+                        and right.attr == "name"
+                        and isinstance(right.value, ast.Name)
+                    ):
+                        return value, None
+
+                    left = value.left
+
+                    if not (
+                        isinstance(left, ast.BinOp)
+                        and isinstance(left.op, ast.Add)
+                    ):
+                        return value, None
+
+                    redirect_text = left.right
+
+                    if not (
+                        isinstance(redirect_text, ast.Constant)
+                        and isinstance(redirect_text.value, str)
+                        and ">" in redirect_text.value
+                    ):
+                        return value, None
+
+                    return left.left, right
+
+                command_expr, redirect_target = split_redirection(expr)
+
+                if isinstance(command_expr, ast.Name):
+                    for candidate in ast.walk(tree):
+                        if (
+                            isinstance(candidate, ast.Assign)
+                            and len(candidate.targets) == 1
+                            and isinstance(candidate.targets[0], ast.Name)
+                            and candidate.targets[0].id == command_expr.id
+                        ):
+                            command_expr = candidate.value
+                            break
+
+                parts = cls._flatten(command_expr, {source_var})
+
                 if not parts or not any(
                     part_kind == "var" for part_kind, _ in parts
                 ):
@@ -291,7 +349,10 @@ COMPLETE SOURCE FILE:
                 for part_kind, value in parts:
                     if part_kind == "var":
                         tokens.append(
-                            ast.Name(id=value, ctx=ast.Load())
+                            ast.Name(
+                                id=value,
+                                ctx=ast.Load(),
+                            )
                         )
                     else:
                         for token in shlex.split(value, posix=True):
@@ -300,83 +361,83 @@ COMPLETE SOURCE FILE:
                 if not tokens:
                     return node
 
-                if is_os_shell:
-                    node.func = ast.Attribute(
+                node.func = ast.Attribute(
+                    value=ast.Name(
+                        id="subprocess",
+                        ctx=ast.Load(),
+                    ),
+                    attr="run",
+                    ctx=ast.Load(),
+                )
+
+                node.args[0] = ast.List(
+                    elts=tokens,
+                    ctx=ast.Load(),
+                )
+
+                if redirect_target is not None:
+                    output_file = ast.Attribute(
                         value=ast.Name(
-                            id="subprocess",
+                            id=redirect_target.value.id,
                             ctx=ast.Load(),
                         ),
-                        attr="run",
+                        attr="name",
                         ctx=ast.Load(),
                     )
 
-                    node.args[0] = ast.List(
-                        elts=tokens,
-                        ctx=ast.Load(),
-                    )
-
-                    redirect_path = None
-
-                    if (
-                        isinstance(expr, ast.BinOp)
-                        and isinstance(expr.op, ast.Add)
-                    ):
-                        for candidate in ast.walk(expr):
-                            if (
-                                isinstance(candidate, ast.Attribute)
-                                and candidate.attr == "name"
-                                and isinstance(candidate.value, ast.Name)
-                            ):
-                                redirect_path = ast.Attribute(
-                                    value=ast.Name(
-                                        id=candidate.value.id,
-                                        ctx=ast.Load(),
-                                    ),
-                                    attr="name",
-                                    ctx=ast.Load(),
-                                )
-                                break
-
-                    if redirect_path is not None:
-                        node.keywords = [
+                    stdout_open = ast.Call(
+                        func=ast.Name(
+                            id="open",
+                            ctx=ast.Load(),
+                        ),
+                        args=[
+                            output_file,
+                            ast.Constant("w"),
+                        ],
+                        keywords=[
                             ast.keyword(
-                                arg="stdout",
-                                value=redirect_path,
+                                arg="encoding",
+                                value=ast.Constant("utf-8"),
                             ),
-                            ast.keyword(
-                                arg="text",
-                                value=ast.Constant(True),
-                            ),
-                            ast.keyword(
-                                arg="check",
-                                value=ast.Constant(False),
-                            ),
-                        ]
-                    else:
-                        node.keywords = [
-                            ast.keyword(
-                                arg="check",
-                                value=ast.Constant(False),
-                            ),
-                            ast.keyword(
-                                arg="capture_output",
-                                value=ast.Constant(True),
-                            ),
-                            ast.keyword(
-                                arg="text",
-                                value=ast.Constant(True),
-                            ),
-                        ]
-
-                else:
-                    node.args[0] = ast.List(
-                        elts=tokens,
-                        ctx=ast.Load(),
+                        ],
                     )
 
                     node.keywords = [
-                        kw for kw in node.keywords
+                        ast.keyword(
+                            arg="stdout",
+                            value=stdout_open,
+                        ),
+                        ast.keyword(
+                            arg="text",
+                            value=ast.Constant(True),
+                        ),
+                        ast.keyword(
+                            arg="check",
+                            value=ast.Constant(False),
+                        ),
+                    ]
+
+                elif is_subprocess:
+                    node.keywords = [
+                        kw
+                        for kw in node.keywords
                         if kw.arg != "shell"
+                    ]
+
+                else:
+                    node.keywords = [
+                        ast.keyword(
+                            arg="check",
+                            value=ast.Constant(False),
+                        ),
+                        ast.keyword(
+                            arg="capture_output",
+                            value=ast.Constant(True),
+                        ),
+                        ast.keyword(
+                            arg="text",
+                            value=ast.Constant(True),
+                        ),
                     ]
 
                 return node
