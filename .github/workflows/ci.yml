@@ -147,12 +147,24 @@ jobs:
             syft dir:/scan/site-packages \
             -o cyclonedx-json=/scan/backend-installed-packages.cdx.json
       - name: Scan SBOM with OSV-Scanner
-        continue-on-error: true
+        shell: bash
         run: |
+          set +e
+
           docker run --rm \
             -v "${{ github.workspace }}/scan:/scan" \
             vajra-backend:latest \
             osv-scanner scan /scan/backend-installed-packages.cdx.json
+
+          scan_status=$?
+
+          if [ "$scan_status" -ne 0 ]; then
+            echo "::warning::OSV-Scanner reported dependency findings (exit code $scan_status). The SBOM has been generated and uploaded for review."
+          else
+            echo "OSV-Scanner completed without reported vulnerabilities."
+          fi
+
+          exit 0
       - name: Upload dependency SBOM
         uses: actions/upload-artifact@v4
         with:
