@@ -217,8 +217,7 @@ def reproduce_finding(
     Reproduce a finding using the isolated target runner.
 
     The target runner loads the Flask application and exercises
-    the vulnerable endpoint using the metadata produced by the
-    analyzer.
+    the vulnerable endpoint using metadata produced by the analyzer.
     """
     metadata = finding.get("extra", {}).get("metadata", {})
 
@@ -246,32 +245,68 @@ def reproduce_finding(
     except OSError as exc:
         return False, f"Target execution failed to start: {exc}"
 
-    raw = completed.stdout.strip().splitlines()
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
 
     record: dict[str, Any] = {}
 
-    if raw:
+    # target_runner prints one JSON record on stdout.
+    if stdout:
         try:
-            record = json.loads(raw[-1])
+            record = json.loads(stdout.splitlines()[-1])
         except json.JSONDecodeError:
             record = {
-                "body": "\n".join(raw[-20:])
+                "ok": False,
+                "body": stdout,
+                "error": stderr,
             }
 
     body = str(record.get("body", ""))
     status_code = int(record.get("status_code", 500))
 
-    # Command injection:
-    # our controlled payload causes the target to emit this marker.
+    # ---------------------------------------------------------
+    # COMMAND INJECTION
+    # ---------------------------------------------------------
+    #
+    # IMPORTANT:
+    # The target runner returns JSON:
+    #
+    # {
+    #   "ok": true,
+    #   "status_code": 200,
+    #   "body": "PING localhost\nVAJRA_CMD_MARKER\n"
+    # }
+    #
+    # Therefore the marker must be checked inside `body`,
+    # NOT directly inside completed.stdout.
+    #
     if kind == "command-injection":
-       command_output = completed.stdout
-       reproduced = "VAJRA_CMD_MARKER" in command_output
-       return reproduced, command_output
+        marker_executed = any(
+            line.strip() == "VAJRA_CMD_MARKER"
+            for line in body.splitlines()
+        )
 
-    # SQL injection:
-    # server/database errors are one strong reproduction signal.
+        if marker_executed:
+            return True, body
+
+        return (
+            False,
+            body
+            or str(
+                record.get(
+                    "error",
+                    stderr or "Target returned no body.",
+                )
+            ),
+        )
+
+    # ---------------------------------------------------------
+    # SQL INJECTION
+    # ---------------------------------------------------------
+
     lowered = body.lower()
 
+    # A database/server error is a strong reproduction signal.
     if status_code >= 500 and any(
         x in lowered
         for x in (
@@ -283,7 +318,8 @@ def reproduce_finding(
     ):
         return True, body
 
-    # Otherwise compare the injected response with a benign baseline.
+    # Otherwise compare the injected response with a benign
+    # baseline response.
     try:
         baseline = subprocess.run(
             [
@@ -300,25 +336,33 @@ def reproduce_finding(
             check=False,
         )
 
-        base_lines = baseline.stdout.strip().splitlines()
+        baseline_stdout = baseline.stdout.strip()
 
         base: dict[str, Any] = {}
 
-        if base_lines:
+        if baseline_stdout:
             try:
-                base = json.loads(base_lines[-1])
+                base = json.loads(
+                    baseline_stdout.splitlines()[-1]
+                )
             except json.JSONDecodeError:
                 base = {}
 
         base_body = str(base.get("body", ""))
 
-        injected_json = json.loads(body) if body else None
+        injected_json = (
+            json.loads(body)
+            if body
+            else None
+        )
+
         baseline_json = (
             json.loads(base_body)
             if base_body
             else None
         )
 
+        # Detect meaningful structured-response differences.
         if (
             isinstance(injected_json, dict)
             and isinstance(baseline_json, dict)
@@ -339,13 +383,16 @@ def reproduce_finding(
                 ):
                     return True, body
 
+        # Detect additional records.
         if (
             isinstance(injected_json, list)
             and isinstance(baseline_json, list)
-            and len(injected_json) > len(baseline_json)
+            and len(injected_json)
+            > len(baseline_json)
         ):
             return True, body
 
+        # Detect a different successful response.
         if (
             status_code
             == int(base.get("status_code", 500))
@@ -363,12 +410,10 @@ def reproduce_finding(
         or str(
             record.get(
                 "error",
-                "Target returned no body.",
+                stderr or "Target returned no body.",
             )
         ),
     )
-
-
 def exploit_payloads_for_kind(
     kind: str,
 ) -> list[str]:
