@@ -165,7 +165,23 @@ COMPLETE SOURCE FILE:
                     parts = cls._flatten(node.value, {source_var})
                     if parts and any(kind_part == "var" for kind_part, _ in parts):
                         variables = [v for kind_part, v in parts if kind_part == "var"]
-                        query = "".join("?" if kind_part == "var" else value for kind_part, value in parts)
+                        query_parts = []
+                        for index, (kind_part, value) in enumerate(parts):
+                            if kind_part == "var":
+                                if query_parts and query_parts[-1].endswith("'"):
+                                    query_parts[-1] = query_parts[-1][:-1]
+                                query_parts.append("?")
+                            else:
+                                text = value
+                                if (
+                                    index > 0
+                                    and parts[index - 1][0] == "var"
+                                    and text.startswith("'")
+                                ):
+                                    text = text[1:]
+                                query_parts.append(text)
+
+                        query = "".join(query_parts)
                         node.value = ast.Constant(query)
                         query_bindings[node.targets[0].id] = variables
                         changed = True
@@ -192,7 +208,23 @@ COMPLETE SOURCE FILE:
                         parts = cls._flatten(query_arg, {source_var})
                     if parts and any(kind_part == "var" for kind_part, _ in parts):
                         variables = [v for kind_part, v in parts if kind_part == "var"]
-                        query = "".join("?" if kind_part == "var" else value for kind_part, value in parts)
+                        query_parts = []
+                        for index, (kind_part, value) in enumerate(parts):
+                            if kind_part == "var":
+                                if query_parts and query_parts[-1].endswith("'"):
+                                    query_parts[-1] = query_parts[-1][:-1]
+                                query_parts.append("?")
+                            else:
+                                text = value
+                                if (
+                                   index > 0
+                                   and parts[index - 1][0] == "var"
+                                   and text.startswith("'")
+                                ):
+                                   text = text[1:]
+                                query_parts.append(text)
+
+                        query = "".join(query_parts)
                         node.args[0] = ast.Constant(query)
                         if node.func.attr == "executescript":
                             node.func.attr = "execute"

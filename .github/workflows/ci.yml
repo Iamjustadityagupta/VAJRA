@@ -227,7 +227,10 @@ jobs:
 
           for file in \
             VAJRA-5-bug-test-targets/VAJRA-01_sql_concat.zip \
-            VAJRA-5-bug-test-targets/VAJRA-02_sql_fstring.zip
+            VAJRA-5-bug-test-targets/VAJRA-02_sql_fstring.zip \
+            VAJRA-5-bug-test-targets/VAJRA-03_command_subprocess.zip \
+            VAJRA-5-bug-test-targets/VAJRA-04_command_os_system.zip \
+            VAJRA-5-bug-test-targets/VAJRA-05_mixed_two_findings.zip
           do
             total=$((total + 1))
             name=$(basename "$file" .zip)

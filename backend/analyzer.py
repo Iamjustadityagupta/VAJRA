@@ -166,15 +166,47 @@ def _ast_findings(root: Path) -> list[dict[str, Any]]:
             arg = node.args[0]
             if isinstance(arg, ast.Name) and arg.id in assignments:
                 arg = assignments[arg.id]
-            used = _names(arg) & tainted
+
+            used = _names(arg)
             if not used:
                 continue
+
             route, method = _route_for_line(routes, node.lineno)
-            variable = next(iter(used))
+
+            source_variable = None
+            pending = list(used)
+            seen = set()
+
+            while pending:
+                candidate = pending.pop()
+                if candidate in seen:
+                    continue
+
+                seen.add(candidate)
+
+                if candidate in inputs:
+                    source_variable = candidate
+                    break
+
+                assigned_expr = assignments.get(candidate)
+                if assigned_expr is not None:
+                    pending.extend(_names(assigned_expr))
+
+            if source_variable is None:
+                continue
+
             findings.append(Finding(
-                "vajra.command-injection", str(path.relative_to(root)), node.lineno, "CRITICAL",
+                "vajra.command-injection",
+                str(path.relative_to(root)),
+                node.lineno,
+                "CRITICAL",
                 "User-controlled request data reaches a shell command execution sink.",
-                "command-injection", route, method, inputs[variable][1], sink, variable,
+                "command-injection",
+                route,
+                method,
+                inputs[source_variable][1],
+                sink,
+                source_variable,
             ).as_dict())
     return findings
 
