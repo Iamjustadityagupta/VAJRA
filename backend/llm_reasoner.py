@@ -250,38 +250,135 @@ COMPLETE SOURCE FILE:
                 node = self.generic_visit(node)
                 if not node.args:
                     return node
-                is_subprocess = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"
-                is_os_shell = isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "os" and node.func.attr in {"system", "popen"}
+
+                is_subprocess = (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "subprocess"
+                )
+
+                is_os_shell = (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "os"
+                    and node.func.attr in {"system", "popen"}
+                )
+
                 if not (is_subprocess or is_os_shell):
                     return node
 
                 expr = node.args[0]
+
                 if isinstance(expr, ast.Name):
                     for candidate in ast.walk(tree):
-                        if isinstance(candidate, ast.Assign) and len(candidate.targets) == 1 and isinstance(candidate.targets[0], ast.Name) and candidate.targets[0].id == expr.id:
+                        if (
+                            isinstance(candidate, ast.Assign)
+                            and len(candidate.targets) == 1
+                            and isinstance(candidate.targets[0], ast.Name)
+                            and candidate.targets[0].id == expr.id
+                        ):
                             expr = candidate.value
                             break
+
                 parts = cls._flatten(expr, {source_var})
-                if not parts or not any(part_kind == "var" for part_kind, _ in parts):
+                if not parts or not any(
+                    part_kind == "var" for part_kind, _ in parts
+                ):
                     return node
 
                 tokens: list[ast.AST] = []
+
                 for part_kind, value in parts:
                     if part_kind == "var":
-                        tokens.append(ast.Name(id=value, ctx=ast.Load()))
+                        tokens.append(
+                            ast.Name(id=value, ctx=ast.Load())
+                        )
                     else:
                         for token in shlex.split(value, posix=True):
                             tokens.append(ast.Constant(token))
+
                 if not tokens:
                     return node
 
                 if is_os_shell:
-                    node.func = ast.Attribute(value=ast.Name(id="subprocess", ctx=ast.Load()), attr="run", ctx=ast.Load())
-                    node.args[0] = ast.List(elts=tokens, ctx=ast.Load())
-                    node.keywords = [ast.keyword(arg="check", value=ast.Constant(False)), ast.keyword(arg="capture_output", value=ast.Constant(True)), ast.keyword(arg="text", value=ast.Constant(True))]
+                    node.func = ast.Attribute(
+                        value=ast.Name(
+                            id="subprocess",
+                            ctx=ast.Load(),
+                        ),
+                        attr="run",
+                        ctx=ast.Load(),
+                    )
+
+                    node.args[0] = ast.List(
+                        elts=tokens,
+                        ctx=ast.Load(),
+                    )
+
+                    redirect_path = None
+
+                    if (
+                        isinstance(expr, ast.BinOp)
+                        and isinstance(expr.op, ast.Add)
+                    ):
+                        for candidate in ast.walk(expr):
+                            if (
+                                isinstance(candidate, ast.Attribute)
+                                and candidate.attr == "name"
+                                and isinstance(candidate.value, ast.Name)
+                            ):
+                                redirect_path = ast.Attribute(
+                                    value=ast.Name(
+                                        id=candidate.value.id,
+                                        ctx=ast.Load(),
+                                    ),
+                                    attr="name",
+                                    ctx=ast.Load(),
+                                )
+                                break
+
+                    if redirect_path is not None:
+                        node.keywords = [
+                            ast.keyword(
+                                arg="stdout",
+                                value=redirect_path,
+                            ),
+                            ast.keyword(
+                                arg="text",
+                                value=ast.Constant(True),
+                            ),
+                            ast.keyword(
+                                arg="check",
+                                value=ast.Constant(False),
+                            ),
+                        ]
+                    else:
+                        node.keywords = [
+                            ast.keyword(
+                                arg="check",
+                                value=ast.Constant(False),
+                            ),
+                            ast.keyword(
+                                arg="capture_output",
+                                value=ast.Constant(True),
+                            ),
+                            ast.keyword(
+                                arg="text",
+                                value=ast.Constant(True),
+                            ),
+                        ]
+
                 else:
-                    node.args[0] = ast.List(elts=tokens, ctx=ast.Load())
-                    node.keywords = [kw for kw in node.keywords if kw.arg != "shell"]
+                    node.args[0] = ast.List(
+                        elts=tokens,
+                        ctx=ast.Load(),
+                    )
+
+                    node.keywords = [
+                        kw for kw in node.keywords
+                        if kw.arg != "shell"
+                    ]
+
                 return node
 
         new_tree = CommandFix().visit(tree)
